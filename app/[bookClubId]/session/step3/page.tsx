@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, use } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Layout, Button } from "@/components";
 import { getSessionById, updateSessionStep } from "@/lib/sessions";
@@ -26,8 +26,9 @@ interface PageState {
 export default function Step3Page({
   params,
 }: {
-  params: { bookClubId: string };
+  params: Promise<{ bookClubId: string }>;
 }) {
+  const { bookClubId } = use(params);
   const router = useRouter();
   const searchParams = useSearchParams();
   const sessionId = searchParams.get("sessionId");
@@ -60,7 +61,7 @@ export default function Step3Page({
         const records = await getMeetingReadingRecords(session.meetingId);
 
         // Fetch members
-        const members = await getBookClubMembers(params.bookClubId);
+        const members = await getBookClubMembers(bookClubId);
         const memberMap = new Map(members.map((m) => [m.id, m.nickname]));
 
         // Extract takeaways from reading records
@@ -93,7 +94,7 @@ export default function Step3Page({
     };
 
     loadData();
-  }, [sessionId, params.bookClubId]);
+  }, [sessionId, bookClubId]);
 
   const handleNextTakeaway = async () => {
     const nextIndex = state.currentIndex + 1;
@@ -137,7 +138,7 @@ export default function Step3Page({
 
       // Navigate to completion page
       router.push(
-        `/${params.bookClubId}/session/complete?meetingId=${state.meetingId}`,
+        `/${bookClubId}/session/complete?meetingId=${state.meetingId}`,
       );
     } catch (err) {
       setState((prev) => ({

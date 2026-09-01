@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, use } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Layout, Button } from "@/components";
 import { getSessionById, advanceQuestion, updateSessionStep } from "@/lib/sessions";
@@ -28,8 +28,9 @@ const QUESTION_TIME_SECONDS = 300; // 5 minutes
 export default function Step2Page({
   params,
 }: {
-  params: { bookClubId: string };
+  params: Promise<{ bookClubId: string }>;
 }) {
+  const { bookClubId } = use(params);
   const router = useRouter();
   const searchParams = useSearchParams();
   const sessionId = searchParams.get("sessionId");
@@ -62,7 +63,7 @@ export default function Step2Page({
         const records = await getMeetingReadingRecords(session.meetingId);
 
         // Fetch members
-        const members = await getBookClubMembers(params.bookClubId);
+        const members = await getBookClubMembers(bookClubId);
         const memberMap = new Map(members.map((m) => [m.id, m.nickname]));
 
         // Extract questions from reading records
@@ -95,7 +96,7 @@ export default function Step2Page({
     };
 
     loadData();
-  }, [sessionId, params.bookClubId]);
+  }, [sessionId, bookClubId]);
 
   // Timer effect
   useEffect(() => {
@@ -160,7 +161,7 @@ export default function Step2Page({
 
       // Navigate to STEP 3
       router.push(
-        `/${params.bookClubId}/session/step3?sessionId=${state.sessionId}`
+        `/${bookClubId}/session/step3?sessionId=${state.sessionId}`
       );
     } catch (err) {
       setState((prev) => ({

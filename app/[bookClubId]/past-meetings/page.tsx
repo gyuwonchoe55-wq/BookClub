@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, use } from "react";
 import { useRouter } from "next/navigation";
 import { Layout } from "@/components";
 import { useAuth } from "@/hooks/useAuth";
@@ -17,8 +17,9 @@ interface PastMeeting {
 export default function PastMeetingsPage({
   params,
 }: {
-  params: { bookClubId: string };
+  params: Promise<{ bookClubId: string }>;
 }) {
+  const { bookClubId } = use(params);
   const router = useRouter();
   const { isLoading: isAuthLoading } = useAuth();
   const [meetings, setMeetings] = useState<PastMeeting[]>([]);
@@ -30,7 +31,7 @@ export default function PastMeetingsPage({
 
     const loadMeetings = async () => {
       try {
-        const allMeetings = await getBookClubMeetings(params.bookClubId);
+        const allMeetings = await getBookClubMeetings(bookClubId);
 
         // Filter out scheduled meetings (current meeting)
         const pastMeetings = allMeetings.filter(
@@ -59,7 +60,7 @@ export default function PastMeetingsPage({
     };
 
     loadMeetings();
-  }, [params.bookClubId, isAuthLoading]);
+  }, [bookClubId, isAuthLoading]);
 
   if (isLoading || isAuthLoading) {
     return (

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, use } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Layout, Button } from "@/components";
 import { getMeetingById } from "@/lib/meetings";
@@ -20,8 +20,9 @@ interface PageState {
 export default function CompletePage({
   params,
 }: {
-  params: { bookClubId: string };
+  params: Promise<{ bookClubId: string }>;
 }) {
+  const { bookClubId } = use(params);
   const router = useRouter();
   const searchParams = useSearchParams();
   const meetingId = searchParams.get("meetingId");
@@ -68,7 +69,7 @@ export default function CompletePage({
   }, [meetingId]);
 
   const handleReturnToClub = () => {
-    router.push(`/${params.bookClubId}`);
+    router.push(`/${bookClubId}`);
   };
 
   if (state.isLoading) {

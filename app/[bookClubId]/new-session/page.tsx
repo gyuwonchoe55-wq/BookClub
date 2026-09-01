@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, use } from "react";
 import { useRouter } from "next/navigation";
 import { Layout, Button, Input } from "@/components";
 import { createMeeting } from "@/lib/meetings";
@@ -9,8 +9,9 @@ import { useAuth } from "@/hooks/useAuth";
 export default function NewSessionPage({
   params,
 }: {
-  params: { bookClubId: string };
+  params: Promise<{ bookClubId: string }>;
 }) {
+  const { bookClubId } = use(params);
   const router = useRouter();
   const { userId, isLoading: isAuthLoading } = useAuth();
 
@@ -46,13 +47,13 @@ export default function NewSessionPage({
 
     try {
       await createMeeting(
-        params.bookClubId,
+        bookClubId,
         formData.bookTitle,
         formData.meetingDate || "",
       );
 
       // Redirect to book club room
-      router.push(`/${params.bookClubId}`);
+      router.push(`/${bookClubId}`);
     } catch (error) {
       setSubmitError(
         error instanceof Error

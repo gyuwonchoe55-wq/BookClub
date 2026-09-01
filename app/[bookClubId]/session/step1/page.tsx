@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, use } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Layout, Button } from "@/components";
 import { getSessionById, updateSessionStep } from "@/lib/sessions";
@@ -25,8 +25,9 @@ interface PageState {
 export default function Step1Page({
   params,
 }: {
-  params: { bookClubId: string };
+  params: Promise<{ bookClubId: string }>;
 }) {
+  const { bookClubId } = use(params);
   const router = useRouter();
   const searchParams = useSearchParams();
   const sessionId = searchParams.get("sessionId");
@@ -58,7 +59,7 @@ export default function Step1Page({
         const records = await getMeetingReadingRecords(session.meetingId);
 
         // Fetch members
-        const members = await getBookClubMembers(params.bookClubId);
+        const members = await getBookClubMembers(bookClubId);
         const memberMap = new Map(members.map((m) => [m.id, m.nickname]));
 
         // Extract sentences from reading records
@@ -91,7 +92,7 @@ export default function Step1Page({
     };
 
     loadData();
-  }, [sessionId, params.bookClubId]);
+  }, [sessionId, bookClubId]);
 
   const handleRevealAuthor = () => {
     setState((prev) => ({
@@ -126,7 +127,7 @@ export default function Step1Page({
 
       // Navigate to STEP 2
       router.push(
-        `/${params.bookClubId}/session/step2?sessionId=${state.sessionId}`
+        `/${bookClubId}/session/step2?sessionId=${state.sessionId}`
       );
     } catch (err) {
       setState((prev) => ({

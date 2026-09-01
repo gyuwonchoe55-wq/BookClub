@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, use } from "react";
 import { useRouter } from "next/navigation";
 import { Layout, Button, Textarea } from "@/components";
 import { useAuth } from "@/hooks/useAuth";
@@ -37,8 +37,9 @@ interface FormData {
 export default function ReadingRecordPage({
   params,
 }: {
-  params: { bookClubId: string };
+  params: Promise<{ bookClubId: string }>;
 }) {
+  const { bookClubId } = use(params);
   const router = useRouter();
   const { userId, isLoading: isAuthLoading } = useAuth();
 
@@ -67,7 +68,7 @@ export default function ReadingRecordPage({
     const loadData = async () => {
       try {
         // Get book club and meeting info
-        const bookClub = await getBookClub(params.bookClubId);
+        const bookClub = await getBookClub(bookClubId);
         if (!bookClub) {
           setState((prev) => ({
             ...prev,
@@ -77,7 +78,7 @@ export default function ReadingRecordPage({
           return;
         }
 
-        const meeting = await getCurrentMeeting(params.bookClubId);
+        const meeting = await getCurrentMeeting(bookClubId);
         if (!meeting) {
           setState((prev) => ({
             ...prev,
@@ -88,7 +89,7 @@ export default function ReadingRecordPage({
         }
 
         // Get current user's member ID
-        const currentMember = await getMemberByUserId(params.bookClubId, userId);
+        const currentMember = await getMemberByUserId(bookClubId, userId);
         if (!currentMember) {
           setState((prev) => ({
             ...prev,
@@ -133,7 +134,7 @@ export default function ReadingRecordPage({
     };
 
     loadData();
-  }, [params.bookClubId, userId, isAuthLoading]);
+  }, [bookClubId, userId, isAuthLoading]);
 
   // Validate form
   const validateForm = (): boolean => {
@@ -183,7 +184,7 @@ export default function ReadingRecordPage({
       }
 
       // Redirect back to book club page
-      router.push(`/${params.bookClubId}`);
+      router.push(`/${bookClubId}`);
     } catch (err) {
       setState((prev) => ({
         ...prev,
