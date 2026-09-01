@@ -562,3 +562,36 @@ CREATE POLICY session_select_member_bookclub
 -- 4. RLS automatically denies modifications to locked/invalid records
 --
 -- ============================================================================
+-- PHASE 5: Grant Data API Table Privileges to Authenticated Role
+-- ============================================================================
+-- Minimal privileges required for app functionality
+-- All sensitive operations (INSERT/UPDATE to core tables) handled via SECURITY DEFINER RPC
+-- DELETE is completely blocked across all tables
+
+-- book_club: SELECT only (via RLS policy: is_book_club_member)
+GRANT SELECT ON public.book_club TO authenticated;
+
+-- member: SELECT only (via RLS policy: is_book_club_member)
+-- Member creation handled by create_book_club_with_host and join_book_club RPC
+GRANT SELECT ON public.member TO authenticated;
+
+-- meeting: SELECT only (via RLS policy: is_book_club_member)
+-- Meeting creation handled by create_book_club_with_host and create_meeting RPC
+-- Meeting updates handled by start_meeting and end_meeting RPC
+GRANT SELECT ON public.meeting TO authenticated;
+
+-- reading_record: SELECT, INSERT, UPDATE
+-- SELECT: Via RLS policy checking meeting's book club membership
+-- INSERT: Via RLS policy validating member ownership and meeting/member relationship
+-- UPDATE: Via RLS policy (own records only, before meeting starts)
+-- DELETE: Blocked by RLS (no policy defined)
+GRANT SELECT ON public.reading_record TO authenticated;
+GRANT INSERT ON public.reading_record TO authenticated;
+GRANT UPDATE ON public.reading_record TO authenticated;
+
+-- session: SELECT only
+-- Session creation handled by start_meeting RPC
+-- Session updates (progress) handled by TASK 10~13 RPC functions (to be implemented)
+GRANT SELECT ON public.session TO authenticated;
+
+-- ============================================================================

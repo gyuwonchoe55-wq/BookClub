@@ -105,7 +105,7 @@ test.describe('E2E 7: New Session', () => {
 
   test('should display past sessions list', async ({ page }) => {
     // Create bookclub
-    const clubName = `Past Sessions Test ${Date.time()}`;
+    const clubName = `Past Sessions Test ${Date.now()}`;
     const firstBook = 'First Book';
     const secondBook = 'Second Book';
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, use } from "react";
 import { useRouter } from "next/navigation";
 import { Layout, Button } from "@/components";
 import { useAuth } from "@/hooks/useAuth";
@@ -41,8 +41,9 @@ interface PageData {
 export default function BookClubPage({
   params,
 }: {
-  params: { bookClubId: string };
+  params: Promise<{ bookClubId: string }>;
 }) {
+  const { bookClubId } = use(params);
   const router = useRouter();
   const { userId, isLoading: isAuthLoading } = useAuth();
   const [data, setData] = useState<PageData | null>(null);
@@ -74,7 +75,7 @@ export default function BookClubPage({
       const sessionId = await startMeeting(data.currentMeeting.id);
       // Navigate to STEP 1 with session ID
       router.push(
-        `/${params.bookClubId}/session/step1?sessionId=${sessionId}`
+        `/${bookClubId}/session/step1?sessionId=${sessionId}`
       );
     } catch (err) {
       setError(
@@ -93,10 +94,10 @@ export default function BookClubPage({
       try {
         const [bookClub, currentMeeting, members, allMeetings] =
           await Promise.all([
-            getBookClub(params.bookClubId),
-            getCurrentMeeting(params.bookClubId),
-            getBookClubMembers(params.bookClubId),
-            getBookClubMeetings(params.bookClubId),
+            getBookClub(bookClubId),
+            getCurrentMeeting(bookClubId),
+            getBookClubMembers(bookClubId),
+            getBookClubMeetings(bookClubId),
           ]);
 
         if (!bookClub) {
@@ -179,7 +180,7 @@ export default function BookClubPage({
     };
 
     loadData();
-  }, [params.bookClubId, userId, isAuthLoading]);
+  }, [bookClubId, userId, isAuthLoading]);
 
   if (isLoading || isAuthLoading) {
     return (
@@ -307,7 +308,7 @@ export default function BookClubPage({
                   <Button
                     variant="secondary"
                     onClick={() =>
-                      router.push(`/${params.bookClubId}/record`)
+                      router.push(`/${bookClubId}/record`)
                     }
                     className="w-full"
                   >
@@ -328,7 +329,7 @@ export default function BookClubPage({
                 <Button
                   variant="primary"
                   onClick={() =>
-                    router.push(`/${params.bookClubId}/record`)
+                    router.push(`/${bookClubId}/record`)
                   }
                   className="w-full"
                 >
@@ -392,7 +393,7 @@ export default function BookClubPage({
             </div>
             <Button
               variant="ghost"
-              onClick={() => router.push(`/${params.bookClubId}/past-meetings`)}
+              onClick={() => router.push(`/${bookClubId}/past-meetings`)}
               className="w-full text-left px-0 border-0 text-sm"
             >
               → 이전 회차 보기
@@ -405,7 +406,7 @@ export default function BookClubPage({
           <div className="border-t border-gray-300 pt-8">
             <Button
               variant="ghost"
-              onClick={() => router.push(`/${params.bookClubId}/new-session`)}
+              onClick={() => router.push(`/${bookClubId}/new-session`)}
               className="w-full text-left px-0 border-0 text-sm"
             >
               + 새 모임 만들기

@@ -35,7 +35,9 @@ export async function createBookClub(
   });
 
   if (error) {
-    throw new Error(`Failed to create book club: ${error.message}`);
+    let errorMsg = `Failed to create book club: ${error.message}`;
+    if (error.details) errorMsg += ` (Details: ${error.details})`;
+    throw new Error(errorMsg);
   }
 
   if (!data || data.length === 0) {

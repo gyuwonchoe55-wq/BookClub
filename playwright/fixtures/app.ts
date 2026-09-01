@@ -10,11 +10,23 @@ export class App {
   constructor(private page: Page, private baseURL: string = '') {}
 
   /**
-   * Navigate to home page
+   * Navigate to home page and wait for auth to complete
    */
   async gotoHome() {
     await this.page.goto('/');
     await this.page.waitForLoadState('networkidle');
+
+    // Wait for auth to complete - "로딩 중..." should disappear
+    await this.page.waitForFunction(
+      () => {
+        const text = document.body.innerText;
+        return !text.includes('로딩 중...');
+      },
+      { timeout: 10000 }
+    );
+
+    // Verify main content is visible
+    await expect(this.page.locator('text=함께 읽고')).toBeVisible({ timeout: 5000 });
   }
 
   /**
@@ -29,6 +41,16 @@ export class App {
     // Click "독서모임 시작하기" or navigate to /create
     await this.page.goto('/create');
     await this.page.waitForLoadState('networkidle');
+
+    // Wait for auth to complete on create page
+    await this.page.waitForFunction(
+      () => {
+        const text = document.body.innerText;
+        return !text.includes('로딩 중...');
+      },
+      { timeout: 10000 }
+    );
+
 
     // Fill club name
     await this.page.fill('input[name="clubName"]', clubName);
@@ -47,13 +69,25 @@ export class App {
     // Click submit button
     await this.page.click('button[type="submit"]');
 
-    // Wait for navigation to book club room
-    await this.page.waitForURL(/\/[a-z0-9-]+$/);
+    // Wait for response (either redirect or error)
+    await new Promise(resolve => setTimeout(resolve, 2000));
+
+    // Check for alert/error message first
+    const alertText = await this.page.locator('[role="alert"]').first().textContent({ timeout: 1000 }).catch(() => null);
+    if (alertText?.trim()) {
+      throw new Error(`RPC Failed: ${alertText.trim()}`);
+    }
+
+    // Try to navigate away from /create
+    const finalUrl = this.page.url();
+    const bookClubId = finalUrl.split('/').pop();
+
+    if (bookClubId === 'create' || finalUrl.includes('/create')) {
+      throw new Error('Form submission failed - page did not navigate (possible RPC error without alert)');
+    }
+
     await this.page.waitForLoadState('networkidle');
 
-    // Extract and return bookClubId from URL
-    const url = this.page.url();
-    const bookClubId = url.split('/').pop();
     return { bookClubId };
   }
 
@@ -107,7 +141,7 @@ export class App {
     application: string
   ) {
     // Click "독서 기록 작성하기" button
-    await this.page.click('button:has-text("독서 기록"), button:has-text("작성하기")');
+    await this.page.click('button:has-text("독서 기록 작성하기")');
 
     // Wait for record page to load
     await this.page.waitForLoadState('networkidle');

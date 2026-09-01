@@ -58,9 +58,15 @@ test.describe('E2E 1: Create Bookclub', () => {
     expect(bookClubId.length).toBeGreaterThan(0);
 
     // 6. Verify bookclub info is displayed
-    // Check for clubName
-    const clubNameText = await page.locator(`text=${clubName}`).isVisible();
-    expect(clubNameText).toBeTruthy();
+    // Wait for page content to load properly
+    await page.waitForLoadState('domcontentloaded');
+    await new Promise(resolve => setTimeout(resolve, 2000));
+
+    // Check for clubName in page text
+    const pageText = await page.textContent('body');
+    const containsClubName = pageText?.includes(clubName) ?? false;
+
+    expect(containsClubName).toBeTruthy();
 
     // Check for bookTitle
     const bookTitleText = await page.locator(`text=${bookTitle}`).isVisible();
