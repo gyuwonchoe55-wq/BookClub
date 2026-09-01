@@ -8,6 +8,7 @@ import { getBookClub } from "@/lib/book-clubs";
 import { getCurrentMeeting, getBookClubMeetings } from "@/lib/meetings";
 import { getBookClubMembers } from "@/lib/members";
 import { getMeetingReadingRecords } from "@/lib/reading-records";
+import { startMeeting } from "@/lib/sessions";
 
 interface MemberWithRecord {
   id: string;
@@ -48,6 +49,7 @@ export default function BookClubPage({
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string>("");
   const [copiedMessage, setCopiedMessage] = useState("");
+  const [isStartingMeeting, setIsStartingMeeting] = useState(false);
 
   const handleCopyInviteLink = async () => {
     if (!data) return;
@@ -64,10 +66,24 @@ export default function BookClubPage({
     }
   };
 
-  const handleStartMeeting = () => {
+  const handleStartMeeting = async () => {
     if (!data?.currentMeeting) return;
-    console.log("모임 시작:", data.currentMeeting.id);
-    // TODO: TASK 10에서 구현
+
+    setIsStartingMeeting(true);
+    try {
+      const sessionId = await startMeeting(data.currentMeeting.id);
+      // Navigate to STEP 1 with session ID
+      router.push(
+        `/${params.bookClubId}/session/step1?sessionId=${sessionId}`
+      );
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "모임을 시작하는데 실패했습니다."
+      );
+      setIsStartingMeeting(false);
+    }
   };
 
   useEffect(() => {
@@ -332,11 +348,12 @@ export default function BookClubPage({
               disabled={
                 !data.currentUserMember?.hasRecord ||
                 data.members.some((m) => !m.hasRecord) ||
-                data.currentMeeting.status !== "scheduled"
+                data.currentMeeting.status !== "scheduled" ||
+                isStartingMeeting
               }
               className="w-full"
             >
-              모임 시작하기
+              {isStartingMeeting ? "모임 시작 중..." : "모임 시작하기"}
             </Button>
             {data.currentMeeting.status !== "scheduled" && (
               <p className="text-xs text-gray-600 mt-2">

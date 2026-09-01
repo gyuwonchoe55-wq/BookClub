@@ -1,69 +1,77 @@
-import Image from "next/image";
+"use client";
+
+import { useRouter } from "next/navigation";
+import { Layout, Button } from "@/components";
+import { useAuth } from "@/hooks/useAuth";
 
 export default function Home() {
+  const router = useRouter();
+  const { isLoading: isAuthLoading } = useAuth();
+
+  if (isAuthLoading) {
+    return (
+      <Layout>
+        <div className="space-y-8 py-16">
+          <p className="text-black">로딩 중...</p>
+        </div>
+      </Layout>
+    );
+  }
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert h-5 w-[100px]"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the{" "}
-            <code className="rounded bg-black/[.06] px-1.5 py-0.5 font-mono text-[0.9em] dark:bg-white/[.08]">
-              page.tsx
-            </code>{" "}
-            file.
+    <Layout>
+      <div className="space-y-12 py-16">
+        {/* Header */}
+        <div className="space-y-4">
+          <h1 className="text-5xl font-bold text-black leading-tight">
+            함께 읽고
+            <br />
+            나누다
           </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
+          <p className="text-lg text-gray-600 leading-relaxed">
+            독서모임을 만들고, 책 이야기를 나누세요.
+            <br />
+            더 깊이 있는 독서 경험을 함께합니다.
           </p>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert h-[14px] w-4"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={14}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+
+        {/* Content */}
+        <div className="space-y-8">
+          <div className="space-y-6">
+            <div className="border border-gray-300 p-8 space-y-3">
+              <h2 className="text-xl font-bold text-black">책을 읽고</h2>
+              <p className="text-sm text-gray-600 leading-relaxed">
+                인상 깊은 문장, 이야기하고 싶은 질문, 배운 점을 남기세요.
+              </p>
+            </div>
+
+            <div className="border border-gray-300 p-8 space-y-3">
+              <h2 className="text-xl font-bold text-black">모임을 진행하고</h2>
+              <p className="text-sm text-gray-600 leading-relaxed">
+                함께 나눈 문장들을 공유하고, 질문에 대해 대화하며, 마지막으로 각자의 기억을 나눕니다.
+              </p>
+            </div>
+
+            <div className="border border-gray-300 p-8 space-y-3">
+              <h2 className="text-xl font-bold text-black">기록을 남긴다</h2>
+              <p className="text-sm text-gray-600 leading-relaxed">
+                독서모임의 모든 순간이 기록됩니다. 언제든 다시 돌아봐 보세요.
+              </p>
+            </div>
+          </div>
         </div>
-      </main>
-    </div>
+
+        {/* CTA Button */}
+        <div className="border-t border-gray-300 pt-8">
+          <Button
+            variant="primary"
+            onClick={() => router.push("/create")}
+            className="w-full"
+          >
+            독서모임 시작하기
+          </Button>
+        </div>
+      </div>
+    </Layout>
   );
 }

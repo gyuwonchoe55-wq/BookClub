@@ -7,8 +7,8 @@ import { getSessionById, updateSessionStep } from "@/lib/sessions";
 import { getMeetingReadingRecords } from "@/lib/reading-records";
 import { getBookClubMembers } from "@/lib/members";
 
-interface Sentence {
-  sentence: string;
+interface Takeaway {
+  takeaway: string;
   memberId: string;
   memberNickname: string;
 }
@@ -16,13 +16,14 @@ interface Sentence {
 interface PageState {
   isLoading: boolean;
   error: string;
-  sentences: Sentence[];
+  takeaways: Takeaway[];
   currentIndex: number;
-  isAuthorRevealed: boolean;
   sessionId: string;
+  meetingId: string;
+  isAdvancing: boolean;
 }
 
-export default function Step1Page({
+export default function Step3Page({
   params,
 }: {
   params: { bookClubId: string };
@@ -34,10 +35,11 @@ export default function Step1Page({
   const [state, setState] = useState<PageState>({
     isLoading: true,
     error: "",
-    sentences: [],
+    takeaways: [],
     currentIndex: 0,
-    isAuthorRevealed: false,
     sessionId: sessionId || "",
+    meetingId: "",
+    isAdvancing: false,
   });
 
   // Load data
@@ -61,25 +63,25 @@ export default function Step1Page({
         const members = await getBookClubMembers(params.bookClubId);
         const memberMap = new Map(members.map((m) => [m.id, m.nickname]));
 
-        // Extract sentences from reading records
-        const sentences: Sentence[] = records
-          .filter((r) => r.memorableQuote)
+        // Extract takeaways from reading records
+        const takeaways: Takeaway[] = records
+          .filter((r) => r.takeaway)
           .map((r) => ({
-            sentence: r.memorableQuote!,
+            takeaway: r.takeaway!,
             memberId: r.memberId,
             memberNickname: memberMap.get(r.memberId) || "알 수 없음",
           }));
 
-        if (sentences.length === 0) {
-          throw new Error("No sentences found in reading records");
+        if (takeaways.length === 0) {
+          throw new Error("No takeaways found in reading records");
         }
 
         setState((prev) => ({
           ...prev,
           isLoading: false,
-          sentences,
+          takeaways,
           currentIndex: session.currentQuestionIndex || 0,
-          isAuthorRevealed: false,
+          meetingId: session.meetingId,
         }));
       } catch (err) {
         setState((prev) => ({
@@ -93,47 +95,55 @@ export default function Step1Page({
     loadData();
   }, [sessionId, params.bookClubId]);
 
-  const handleRevealAuthor = () => {
-    setState((prev) => ({
-      ...prev,
-      isAuthorRevealed: true,
-    }));
-  };
-
-  const handleNextSentence = () => {
+  const handleNextTakeaway = async () => {
     const nextIndex = state.currentIndex + 1;
 
-    if (nextIndex >= state.sentences.length) {
-      // All sentences completed, move to STEP 2
-      handleMoveToStep2();
+    if (nextIndex >= state.takeaways.length) {
+      // All takeaways completed, end meeting
+      await handleEndMeeting();
     } else {
-      setState((prev) => ({
-        ...prev,
-        currentIndex: nextIndex,
-        isAuthorRevealed: false,
-      }));
+      try {
+        setState((prev) => ({
+          ...prev,
+          isAdvancing: true,
+        }));
+
+        // Advance to next takeaway by incrementing currentQuestionIndex
+        // (This will be tracked in the session)
+        setState((prev) => ({
+          ...prev,
+          currentIndex: nextIndex,
+          isAdvancing: false,
+        }));
+      } catch (err) {
+        setState((prev) => ({
+          ...prev,
+          isAdvancing: false,
+          error:
+            err instanceof Error ? err.message : "Failed to advance takeaway",
+        }));
+      }
     }
   };
 
-  const handleMoveToStep2 = async () => {
+  const handleEndMeeting = async () => {
     try {
       setState((prev) => ({
         ...prev,
-        isLoading: true,
+        isAdvancing: true,
       }));
 
-      await updateSessionStep(state.sessionId, "discussion");
+      await updateSessionStep(state.sessionId, "completed");
 
-      // Navigate to STEP 2
+      // Navigate to completion page
       router.push(
-        `/${params.bookClubId}/session/step2?sessionId=${state.sessionId}`
+        `/${params.bookClubId}/session/complete?meetingId=${state.meetingId}`,
       );
     } catch (err) {
       setState((prev) => ({
         ...prev,
-        isLoading: false,
-        error:
-          err instanceof Error ? err.message : "Failed to move to STEP 2",
+        isAdvancing: false,
+        error: err instanceof Error ? err.message : "Failed to end meeting",
       }));
     }
   };
@@ -168,11 +178,11 @@ export default function Step1Page({
     );
   }
 
-  if (state.sentences.length === 0) {
+  if (state.takeaways.length === 0) {
     return (
       <Layout>
         <div className="flex h-screen flex-col items-center justify-center gap-4">
-          <p className="text-gray-600">진행할 문장이 없습니다.</p>
+          <p className="text-gray-600">진행할 적용점이 없습니다.</p>
           <Button
             onClick={() => router.back()}
             className="border border-black px-6 py-2"
@@ -184,16 +194,16 @@ export default function Step1Page({
     );
   }
 
-  const currentSentence = state.sentences[state.currentIndex];
-  const isLastSentence = state.currentIndex === state.sentences.length - 1;
-  const progressText = `${state.currentIndex + 1}/${state.sentences.length}`;
+  const currentTakeaway = state.takeaways[state.currentIndex];
+  const isLastTakeaway = state.currentIndex === state.takeaways.length - 1;
+  const progressText = `${state.currentIndex + 1}/${state.takeaways.length}`;
 
   return (
     <Layout>
       <div className="flex min-h-screen flex-col">
         {/* Header */}
         <div className="mb-12">
-          <h1 className="text-3xl font-bold">STEP 1 · 아이스브레이킹</h1>
+          <h1 className="text-3xl font-bold">STEP 3 · 마무리하기</h1>
         </div>
 
         {/* Progress Bar */}
@@ -205,7 +215,9 @@ export default function Step1Page({
                   className="border-r border-black bg-black"
                   style={{
                     height: "4px",
-                    width: `${((state.currentIndex + 1) / state.sentences.length) * 100}%`,
+                    width: `${
+                      ((state.currentIndex + 1) / state.takeaways.length) * 100
+                    }%`,
                   }}
                 />
               </div>
@@ -218,58 +230,38 @@ export default function Step1Page({
 
         {/* Main Content */}
         <div className="flex flex-1 flex-col justify-center gap-12">
-          {/* Sentence Number */}
+          {/* Participant Number */}
           <div className="text-center">
-            <p className="text-sm text-gray-600">문장 {state.currentIndex + 1}</p>
-          </div>
-
-          {/* Current Sentence */}
-          <div className="text-center">
-            <p className="whitespace-pre-wrap text-2xl font-bold leading-relaxed">
-              &ldquo;{currentSentence.sentence}&rdquo;
+            <p className="text-sm text-gray-600">
+              참여자 {state.currentIndex + 1} / {state.takeaways.length}
             </p>
           </div>
 
-          {/* Author Section */}
-          <div className="space-y-4 text-center">
-            {!state.isAuthorRevealed ? (
-              <>
-                <p className="text-lg text-gray-600">누가 고른 문장일까요?</p>
-              </>
-            ) : (
-              <>
-                <p className="text-lg font-bold">
-                  정답은 {currentSentence.memberNickname}님!
-                </p>
-                <p className="text-gray-600">
-                  {currentSentence.memberNickname}님이 이 문장을 고른 이유를
-                  들어볼까요?
-                </p>
-              </>
-            )}
+          {/* Member Name */}
+          <div className="text-center">
+            <p className="text-lg font-bold">
+              {currentTakeaway.memberNickname}님의 기억
+            </p>
+          </div>
+
+          {/* Current Takeaway */}
+          <div className="text-center">
+            <p className="whitespace-pre-wrap text-2xl font-bold leading-relaxed">
+              {currentTakeaway.takeaway}
+            </p>
           </div>
         </div>
 
-        {/* Action Buttons */}
+        {/* Action Button */}
         <div className="mt-12">
-          {!state.isAuthorRevealed ? (
-            <Button
-              variant="primary"
-              onClick={handleRevealAuthor}
-              className="w-full"
-            >
-              작성자 공개
-            </Button>
-          ) : (
-            <Button
-              variant="primary"
-              onClick={handleNextSentence}
-              disabled={state.isLoading}
-              className="w-full"
-            >
-              {isLastSentence ? "STEP 2로 이동" : "다음 문장"}
-            </Button>
-          )}
+          <Button
+            variant="primary"
+            onClick={isLastTakeaway ? handleEndMeeting : handleNextTakeaway}
+            disabled={state.isAdvancing}
+            className="w-full"
+          >
+            {isLastTakeaway ? "모임 종료" : "다음 참여자"}
+          </Button>
         </div>
       </div>
     </Layout>
