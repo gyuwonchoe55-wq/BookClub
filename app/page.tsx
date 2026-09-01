@@ -1,14 +1,40 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Layout, Button } from "@/components";
 import { useAuth } from "@/hooks/useAuth";
+import { getUserBookClubs } from "@/lib/book-clubs";
+
+interface BookClub {
+  id: string;
+  name: string;
+}
 
 export default function Home() {
   const router = useRouter();
   const { isLoading: isAuthLoading } = useAuth();
+  const [bookClubs, setBookClubs] = useState<BookClub[]>([]);
+  const [isLoadingClubs, setIsLoadingClubs] = useState(true);
 
-  if (isAuthLoading) {
+  useEffect(() => {
+    if (isAuthLoading) return;
+
+    const loadBookClubs = async () => {
+      try {
+        const clubs = await getUserBookClubs();
+        setBookClubs(clubs);
+      } catch (err) {
+        console.error("Failed to load book clubs:", err);
+      } finally {
+        setIsLoadingClubs(false);
+      }
+    };
+
+    loadBookClubs();
+  }, [isAuthLoading]);
+
+  if (isAuthLoading || isLoadingClubs) {
     return (
       <Layout>
         <div className="space-y-8 py-16">
@@ -60,6 +86,24 @@ export default function Home() {
             </div>
           </div>
         </div>
+
+        {/* My Book Clubs */}
+        {bookClubs.length > 0 && (
+          <div className="border-t border-gray-300 pt-8 space-y-4">
+            <p className="text-sm font-medium text-gray-600">내 독서모임</p>
+            <div className="space-y-2">
+              {bookClubs.map((club) => (
+                <button
+                  key={club.id}
+                  onClick={() => router.push(`/${club.id}`)}
+                  className="w-full text-left px-4 py-3 border border-gray-300 hover:bg-gray-50 transition-colors"
+                >
+                  <p className="text-sm font-medium text-black">{club.name}</p>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* CTA Button */}
         <div className="border-t border-gray-300 pt-8">

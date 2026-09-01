@@ -106,3 +106,32 @@ export async function getBookClubByInviteCode(
     createdAt: data.created_at,
   };
 }
+
+/**
+ * Get all book clubs the current user is a member of
+ */
+export async function getUserBookClubs(): Promise<BookClub[]> {
+  const supabase = createClient();
+
+  const { data, error } = await supabase
+    .from("member")
+    .select("book_club:book_club_id (id, name, invite_code, created_at)")
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    throw new Error(`Failed to fetch user book clubs: ${error.message}`);
+  }
+
+  if (!data || data.length === 0) {
+    return [];
+  }
+
+  return data
+    .filter((item: any) => item.book_club)
+    .map((item: any) => ({
+      id: item.book_club.id,
+      name: item.book_club.name,
+      inviteCode: item.book_club.invite_code,
+      createdAt: item.book_club.created_at,
+    }));
+}
