@@ -116,9 +116,10 @@ export default function PastMeetingsPage({
         {meetings.length > 0 && (
           <div className="space-y-2">
             {meetings.map((meeting) => (
-              <div
+              <button
                 key={meeting.id}
-                className="border border-gray-300 p-4 space-y-2"
+                onClick={() => router.push(`/${bookClubId}/past-meetings/${meeting.id}`)}
+                className="w-full text-left border border-gray-300 p-4 space-y-2 hover:bg-gray-50 transition-colors"
               >
                 <div className="flex items-center justify-between">
                   <p className="text-sm text-gray-600">
@@ -139,7 +140,7 @@ export default function PastMeetingsPage({
                     day: "numeric",
                   })}
                 </p>
-              </div>
+              </button>
             ))}
           </div>
         )}
