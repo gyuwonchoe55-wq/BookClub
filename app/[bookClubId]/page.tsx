@@ -3,17 +3,38 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Layout, Button } from "@/components";
+import { useAuth } from "@/hooks/useAuth";
 import { getBookClub } from "@/lib/book-clubs";
-import { getCurrentMeeting } from "@/lib/meetings";
+import { getCurrentMeeting, getBookClubMeetings } from "@/lib/meetings";
 import { getBookClubMembers } from "@/lib/members";
+import { getMeetingReadingRecords } from "@/lib/reading-records";
 
-interface BookClubRoom {
+interface MemberWithRecord {
+  id: string;
+  nickname: string;
+  isHost: boolean;
+  hasRecord: boolean;
+  isCurrentUser: boolean;
+}
+
+interface PageData {
   clubName: string;
   inviteCode: string;
-  currentBook?: string;
-  meetingDate?: string;
-  memberCount: number;
-  isHost: boolean;
+  currentMeeting: {
+    id: string;
+    bookTitle: string;
+    meetingDate: string;
+    status: "scheduled" | "in_progress" | "completed";
+  } | null;
+  members: MemberWithRecord[];
+  currentUserMember: MemberWithRecord | null;
+  isCurrentUserHost: boolean;
+  pastMeetings: Array<{
+    id: string;
+    bookTitle: string;
+    meetingDate: string;
+    status: string;
+  }>;
 }
 
 export default function BookClubPage({
@@ -22,7 +43,8 @@ export default function BookClubPage({
   params: { bookClubId: string };
 }) {
   const router = useRouter();
-  const [data, setData] = useState<BookClubRoom | null>(null);
+  const { userId, isLoading: isAuthLoading } = useAuth();
+  const [data, setData] = useState<PageData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string>("");
   const [copiedMessage, setCopiedMessage] = useState("");
@@ -35,7 +57,6 @@ export default function BookClubPage({
     try {
       await navigator.clipboard.writeText(inviteLink);
       setCopiedMessage("초대 링크가 복사되었습니다.");
-      // Clear message after 2 seconds
       setTimeout(() => setCopiedMessage(""), 2000);
     } catch {
       setCopiedMessage("복사에 실패했습니다.");
@@ -43,27 +64,92 @@ export default function BookClubPage({
     }
   };
 
+  const handleStartMeeting = () => {
+    if (!data?.currentMeeting) return;
+    console.log("모임 시작:", data.currentMeeting.id);
+    // TODO: TASK 10에서 구현
+  };
+
   useEffect(() => {
+    if (isAuthLoading) return;
+
     const loadData = async () => {
       try {
-        const [bookClub, meeting, members] = await Promise.all([
-          getBookClub(params.bookClubId),
-          getCurrentMeeting(params.bookClubId),
-          getBookClubMembers(params.bookClubId),
-        ]);
+        const [bookClub, currentMeeting, members, allMeetings] =
+          await Promise.all([
+            getBookClub(params.bookClubId),
+            getCurrentMeeting(params.bookClubId),
+            getBookClubMembers(params.bookClubId),
+            getBookClubMeetings(params.bookClubId),
+          ]);
 
         if (!bookClub) {
           setError("독서모임을 찾을 수 없습니다.");
+          setIsLoading(false);
           return;
         }
+
+        // Load reading records for current meeting if it exists
+        let memberWithRecords: MemberWithRecord[] = [];
+        if (currentMeeting) {
+          const records = await getMeetingReadingRecords(currentMeeting.id);
+          memberWithRecords = members.map((member) => ({
+            id: member.id,
+            nickname: member.nickname,
+            isHost: member.isHost,
+            hasRecord: records.some((r) => r.memberId === member.id),
+            isCurrentUser: false,
+          }));
+        } else {
+          memberWithRecords = members.map((member) => ({
+            id: member.id,
+            nickname: member.nickname,
+            isHost: member.isHost,
+            hasRecord: false,
+            isCurrentUser: false,
+          }));
+        }
+
+        // Mark current user and determine if host
+        const currentUserMember = memberWithRecords.find((m) => {
+          const originalMember = members.find((om) => om.id === m.id);
+          return originalMember?.userId === userId;
+        });
+
+        const membersWithCurrentUserMarked = memberWithRecords.map((m) => {
+          const originalMember = members.find((om) => om.id === m.id);
+          return {
+            ...m,
+            isCurrentUser: originalMember?.userId === userId,
+          };
+        });
+
+        // Get past meetings (all except current)
+        const pastMeetings = allMeetings
+          .filter((m) => m.status !== "scheduled")
+          .slice(0, 5)
+          .map((m) => ({
+            id: m.id,
+            bookTitle: m.bookTitle,
+            meetingDate: m.meetingDate,
+            status: m.status,
+          }));
 
         setData({
           clubName: bookClub.name,
           inviteCode: bookClub.inviteCode,
-          currentBook: meeting?.bookTitle,
-          meetingDate: meeting?.meetingDate,
-          memberCount: members.length,
-          isHost: members.some((m) => m.isHost),
+          currentMeeting: currentMeeting
+            ? {
+                id: currentMeeting.id,
+                bookTitle: currentMeeting.bookTitle,
+                meetingDate: currentMeeting.meetingDate,
+                status: currentMeeting.status,
+              }
+            : null,
+          members: membersWithCurrentUserMarked,
+          currentUserMember: currentUserMember || null,
+          isCurrentUserHost: currentUserMember?.isHost || false,
+          pastMeetings,
         });
       } catch (err) {
         setError(
@@ -77,9 +163,9 @@ export default function BookClubPage({
     };
 
     loadData();
-  }, [params.bookClubId]);
+  }, [params.bookClubId, userId, isAuthLoading]);
 
-  if (isLoading) {
+  if (isLoading || isAuthLoading) {
     return (
       <Layout>
         <div className="space-y-4">
@@ -93,7 +179,7 @@ export default function BookClubPage({
     return (
       <Layout>
         <div className="space-y-6">
-          <div className="border border-gray-300 bg-gray-50 p-4">
+          <div className="border border-gray-300 p-4">
             <p className="text-black text-sm">
               {error || "알 수 없는 오류가 발생했습니다."}
             </p>
@@ -112,76 +198,203 @@ export default function BookClubPage({
 
   return (
     <Layout>
-      <div className="space-y-8">
-        {/* Header */}
-        <div className="space-y-6">
+      <div className="space-y-12">
+        {/* Book Club Name */}
+        <div>
           <h1 className="text-4xl font-bold text-black">{data.clubName}</h1>
+        </div>
 
-          {/* Current Book Info */}
-          {data.currentBook && (
-            <div className="border border-gray-300 p-6 space-y-3">
-              <div>
-                <p className="text-sm text-gray-600 font-medium mb-1">
-                  현재 책
+        {/* Current Meeting Card */}
+        {data.currentMeeting && (
+          <div className="border border-gray-300 p-8 space-y-4">
+            <p className="text-sm text-gray-600 font-medium">현재 회차</p>
+            <div className="space-y-3">
+              <p className="text-2xl font-semibold text-black">
+                {data.currentMeeting.bookTitle}
+              </p>
+              <div className="space-y-1">
+                <p className="text-sm text-gray-600">
+                  {new Date(data.currentMeeting.meetingDate).toLocaleDateString(
+                    "ko-KR",
+                  )}
                 </p>
-                <p className="text-lg font-semibold text-black">
-                  {data.currentBook}
+                <p className="text-sm text-gray-600">
+                  {data.currentMeeting.status === "scheduled" && "모임 전"}
+                  {data.currentMeeting.status === "in_progress" && "진행 중"}
+                  {data.currentMeeting.status === "completed" && "완료"}
                 </p>
               </div>
-              {data.meetingDate && (
-                <div>
-                  <p className="text-sm text-gray-600 font-medium mb-1">
-                    모임 날짜
-                  </p>
-                  <p className="text-black">
-                    {new Date(data.meetingDate).toLocaleDateString("ko-KR")}
-                  </p>
-                </div>
-              )}
             </div>
-          )}
+          </div>
+        )}
 
-          {/* Members Info */}
-          <div>
-            <p className="text-sm text-gray-600 font-medium mb-2">참여자</p>
-            <p className="text-black">{data.memberCount}명이 참여 중입니다.</p>
+        {/* Members Section */}
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <p className="text-sm text-gray-600 font-medium">
+              함께하는 사람 {data.members.length}명
+            </p>
+          </div>
+          <div className="space-y-2">
+            {data.members.map((member) => (
+              <div
+                key={member.id}
+                className={`flex items-center justify-between px-4 py-3 text-sm ${
+                  member.isCurrentUser ? "bg-gray-100" : ""
+                }`}
+              >
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="text-gray-400">●</span>
+                  <span className="text-black font-medium">
+                    {member.nickname}
+                  </span>
+                  {member.isHost && (
+                    <span className="text-sm text-gray-600">👑</span>
+                  )}
+                </div>
+                <span className="text-xs text-gray-600 ml-2 flex-shrink-0">
+                  {member.hasRecord ? "작성완료" : "미작성"}
+                </span>
+              </div>
+            ))}
           </div>
         </div>
 
-        {/* Actions */}
-        <div className="border-t border-gray-300 pt-8 space-y-4">
-          {/* Copy Invite Link Button */}
-          <div className="space-y-2">
+        {/* Copy Invite Link Button (Host Only) */}
+        {data.isCurrentUserHost && (
+          <div className="border-t border-gray-300 pt-8">
+            <div className="space-y-2">
+              <Button
+                variant="secondary"
+                onClick={handleCopyInviteLink}
+                className="w-full"
+              >
+                친구 초대하기
+              </Button>
+              {copiedMessage && (
+                <p className="text-xs text-gray-600 text-center">
+                  {copiedMessage}
+                </p>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* My Reading Record Section */}
+        {data.currentMeeting && (
+          <div className="border-t border-gray-300 pt-8 space-y-4">
+            <p className="text-sm text-gray-600 font-medium">나의 독서 기록</p>
+            {data.currentUserMember?.hasRecord ? (
+              <div>
+                <p className="text-sm text-black mb-4">작성완료</p>
+                <div className="space-y-3">
+                  <Button
+                    variant="secondary"
+                    onClick={() =>
+                      router.push(`/${params.bookClubId}/record`)
+                    }
+                    className="w-full"
+                  >
+                    기록 수정하기
+                  </Button>
+                  {data.currentMeeting.status === "in_progress" && (
+                    <p className="text-xs text-gray-600">
+                      진행 중인 모임은 수정할 수 없습니다.
+                    </p>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div>
+                <p className="text-sm text-gray-600 mb-4">
+                  아직 기록을 작성하지 않았어요.
+                </p>
+                <Button
+                  variant="primary"
+                  onClick={() =>
+                    router.push(`/${params.bookClubId}/record`)
+                  }
+                  className="w-full"
+                >
+                  독서 기록 작성하기
+                </Button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Start Meeting Button (Host Only) */}
+        {data.isCurrentUserHost && data.currentMeeting && (
+          <div className="border-t border-gray-300 pt-8">
             <Button
-              variant="secondary"
-              onClick={handleCopyInviteLink}
+              variant="primary"
+              onClick={handleStartMeeting}
+              disabled={
+                !data.currentUserMember?.hasRecord ||
+                data.members.some((m) => !m.hasRecord) ||
+                data.currentMeeting.status !== "scheduled"
+              }
               className="w-full"
             >
-              참여 링크 복사
+              모임 시작하기
             </Button>
-            {copiedMessage && (
-              <p className="text-sm text-gray-600 text-center">
-                {copiedMessage}
+            {data.currentMeeting.status !== "scheduled" && (
+              <p className="text-xs text-gray-600 mt-2">
+                이미 진행된 또는 완료된 모임입니다.
+              </p>
+            )}
+            {data.currentUserMember && !data.currentUserMember.hasRecord && (
+              <p className="text-xs text-gray-600 mt-2">
+                먼저 자신의 독서 기록을 작성해주세요.
+              </p>
+            )}
+            {data.members.some((m) => !m.hasRecord) && (
+              <p className="text-xs text-gray-600 mt-2">
+                모든 참여자의 기록 작성을 기다리는 중입니다.
               </p>
             )}
           </div>
+        )}
 
-          {/* Placeholder Text */}
-          <div>
-            <p className="text-sm text-gray-600 mb-4">
-              주요 기능이 곧 추가됩니다.
-            </p>
+        {/* Past Meetings Section */}
+        {data.pastMeetings.length > 0 && (
+          <div className="border-t border-gray-300 pt-8 space-y-4">
+            <p className="text-sm text-gray-600 font-medium">지난 모임</p>
+            <div className="space-y-2">
+              {data.pastMeetings.map((meeting) => (
+                <div
+                  key={meeting.id}
+                  className="flex items-center justify-between px-4 py-2 text-sm"
+                >
+                  <span className="text-black">{meeting.bookTitle}</span>
+                  <span className="text-xs text-gray-600">
+                    {new Date(meeting.meetingDate).toLocaleDateString("ko-KR")}
+                  </span>
+                </div>
+              ))}
+            </div>
+            <Button
+              variant="ghost"
+              onClick={() => router.push(`/${params.bookClubId}/past-meetings`)}
+              className="w-full text-left px-0 border-0 text-sm"
+            >
+              → 이전 회차 보기
+            </Button>
           </div>
+        )}
 
-          {/* Home Button */}
-          <Button
-            variant="secondary"
-            onClick={() => router.push("/")}
-            className="w-full"
-          >
-            홈으로 돌아가기
-          </Button>
-        </div>
+        {/* New Meeting Button (Host Only) */}
+        {data.isCurrentUserHost && (
+          <div className="border-t border-gray-300 pt-8">
+            <Button
+              variant="ghost"
+              onClick={() => router.push(`/${params.bookClubId}/new-session`)}
+              className="w-full text-left px-0 border-0 text-sm"
+            >
+              + 새 모임 만들기
+            </Button>
+          </div>
+        )}
       </div>
     </Layout>
   );
