@@ -95,22 +95,21 @@ export class App {
    * Get invite code from current bookclub page
    */
   async getInviteCode(): Promise<string> {
-    // The invite code should be displayed on the bookclub page
-    // Look for it in the page content or get it from the button/link text
-    const inviteLink = await this.page.getAttribute(
-      'button[title*="invite" i], button[title*="share" i], a[href*="join"]',
-      'href'
-    );
+    // Try to find invite code in page text (appears in /join/ links)
+    const text = await this.page.textContent('body');
+    const match = text?.match(/\/join\/([A-Za-z0-9_-]+)/);
+    if (match?.[1]) {
+      return match[1];
+    }
 
-    if (inviteLink) {
-      const code = inviteLink.split('/').pop();
+    // If not found in text, try to extract from URL if redirected
+    const url = this.page.url();
+    if (url.includes('/join/')) {
+      const code = url.split('/join/').pop();
       if (code) return code;
     }
 
-    // Fallback: try to find it in visible text
-    const text = await this.page.textContent('body');
-    const match = text?.match(/\/join\/([A-Z0-9]+)/);
-    return match?.[1] || '';
+    return '';
   }
 
   /**

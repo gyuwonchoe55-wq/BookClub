@@ -90,15 +90,13 @@ test.describe('E2E 1: Create Bookclub', () => {
     );
     bookClubId = result.bookClubId;
 
-    // Verify invite link is accessible
-    const inviteLink = await page.getAttribute(
-      'button[title*="invite" i], a[href*="/join/"]',
-      'href'
-    );
+    // Verify "친구 초대하기" button is visible (host only feature)
+    const inviteButton = page.locator('button:has-text("친구 초대하기")');
+    await expect(inviteButton).toBeVisible({ timeout: 5000 });
 
-    // Or check for the link in page content
-    const joinLinkVisible = await page.locator('text=/join\\//').isVisible();
-    expect(joinLinkVisible || inviteLink).toBeTruthy();
+    // Verify members section exists with host
+    await expect(page.locator('text=함께하는 사람')).toBeVisible();
+    await expect(page.locator('text=Host')).toBeVisible();
   });
 
   test('should display bookclub information correctly', async ({ page }) => {
@@ -117,8 +115,6 @@ test.describe('E2E 1: Create Bookclub', () => {
     await expect(page.locator(`text=Creator`)).toBeVisible();
 
     // Verify meeting status is shown
-    await expect(
-      page.locator('text=scheduled, text=예정됨, text=진행 예정')
-    ).toBeVisible({ timeout: 5000 });
+    await expect(page.locator('text=모임 전')).toBeVisible({ timeout: 5000 });
   });
 });
