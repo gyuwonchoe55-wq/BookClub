@@ -135,3 +135,35 @@ export async function getUserBookClubs(): Promise<BookClub[]> {
       createdAt: item.book_club.created_at,
     }));
 }
+
+/**
+ * Get book club info by invite code (for join page)
+ * Uses RPC to bypass RLS - unauthenticated users can see basic info
+ */
+export async function getBookClubInfoByInviteCode(
+  inviteCode: string
+): Promise<{ id: string; name: string } | null> {
+  const supabase = createClient();
+
+  const { data, error } = await supabase.rpc(
+    "get_book_club_by_invite_code",
+    {
+      p_invite_code: inviteCode,
+    }
+  );
+
+  if (error) {
+    throw new Error(
+      `Failed to fetch book club by invite code: ${error.message}`
+    );
+  }
+
+  if (!data || data.length === 0) {
+    return null;
+  }
+
+  return {
+    id: data[0].id,
+    name: data[0].name,
+  };
+}

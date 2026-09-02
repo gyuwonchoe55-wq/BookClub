@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, use } from "react";
 import { useRouter } from "next/navigation";
 import { Layout, Button, Input } from "@/components";
-import { getBookClubByInviteCode } from "@/lib/book-clubs";
+import { getBookClubInfoByInviteCode } from "@/lib/book-clubs";
 import { getCurrentMeeting } from "@/lib/meetings";
 import { joinBookClub } from "@/lib/members";
 import { useAuth } from "@/hooks/useAuth";
@@ -18,8 +18,9 @@ interface JoinPageData {
 export default function JoinPage({
   params,
 }: {
-  params: { inviteCode: string };
+  params: Promise<{ inviteCode: string }>;
 }) {
+  const { inviteCode } = use(params);
   const router = useRouter();
   const { userId, isLoading: isAuthLoading } = useAuth();
 
@@ -34,7 +35,7 @@ export default function JoinPage({
   useEffect(() => {
     const loadData = async () => {
       try {
-        const bookClub = await getBookClubByInviteCode(params.inviteCode);
+        const bookClub = await getBookClubInfoByInviteCode(inviteCode);
 
         if (!bookClub) {
           setLoadError("초대 링크가 유효하지 않습니다.");
@@ -62,7 +63,7 @@ export default function JoinPage({
     };
 
     loadData();
-  }, [params.inviteCode]);
+  }, [inviteCode]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -81,7 +82,7 @@ export default function JoinPage({
     setSubmitError("");
 
     try {
-      const response = await joinBookClub(params.inviteCode, nickname.trim());
+      const response = await joinBookClub(inviteCode, nickname.trim());
       // Redirect to book club room
       router.push(`/${response.bookClubId}`);
     } catch (error) {
