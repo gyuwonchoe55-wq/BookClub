@@ -152,7 +152,11 @@ AS $$
 DECLARE
   v_book_club_id uuid;
   v_member_id uuid;
+  v_current_user_id uuid;
 BEGIN
+  -- Capture current user ID once to avoid ambiguity
+  v_current_user_id := auth.uid();
+
   -- Input validation
   IF p_invite_code IS NULL OR TRIM(p_invite_code) = '' THEN
     RAISE EXCEPTION 'Invite code cannot be empty';
@@ -162,20 +166,22 @@ BEGIN
   END IF;
 
   -- Step 1: Look up book club by invite code
-  SELECT id INTO v_book_club_id
-  FROM book_club
-  WHERE invite_code = p_invite_code;
+  -- Use explicit table alias to avoid column ambiguity
+  SELECT bc.id INTO v_book_club_id
+  FROM book_club bc
+  WHERE bc.invite_code = p_invite_code;
 
   IF v_book_club_id IS NULL THEN
     RAISE EXCEPTION 'Invalid invite code';
   END IF;
 
-  -- Step 2: Check if user is already a member (UNIQUE constraint will catch duplicates)
-  -- This is handled by the UNIQUE constraint, but we provide a better error message
+  -- Step 2: Check if user is already a member
+  -- Use explicit table alias for clarity
   IF EXISTS(
-    SELECT 1 FROM member
-    WHERE book_club_id = v_book_club_id
-    AND user_id = auth.uid()
+    SELECT 1
+    FROM member m
+    WHERE m.book_club_id = v_book_club_id
+    AND m.user_id = v_current_user_id
   ) THEN
     RAISE EXCEPTION 'You are already a member of this book club';
   END IF;
@@ -183,10 +189,10 @@ BEGIN
   -- Step 3: Create member record for current user
   -- is_host is always false for new members joining via invite code
   INSERT INTO member (book_club_id, user_id, nickname, is_host, joined_at, created_at, updated_at)
-  VALUES (v_book_club_id, auth.uid(), p_nickname, false, now(), now(), now())
+  VALUES (v_book_club_id, v_current_user_id, p_nickname, false, now(), now(), now())
   RETURNING id INTO v_member_id;
 
-  -- Return results
+  -- Return results with explicit local variables
   RETURN QUERY SELECT v_book_club_id, v_member_id;
 END;
 $$;
