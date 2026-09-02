@@ -2,7 +2,7 @@
 -- Used by join page to show basic info to unauthenticated users
 -- Returns: id, name only (minimal info)
 CREATE OR REPLACE FUNCTION get_book_club_by_invite_code(p_invite_code text)
-RETURNS TABLE(id uuid, name text)
+RETURNS TABLE(id uuid, name character varying)
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public
