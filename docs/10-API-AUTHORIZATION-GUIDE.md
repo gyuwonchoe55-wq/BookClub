@@ -2,647 +2,489 @@
 
 ## Overview
 
-This guide explains how the Next.js API layer implements authorization checks that work alongside RLS policies. While RLS enforces database-level security, the API layer implements business logic and user-friendly error messages.
+This guide describes how BookClub implements data access and authorization using Supabase authentication, direct queries with RLS, and SECURITY DEFINER RPC functions. BookClub uses anonymous authentication (`signInAnonymously()`) to establish authenticated sessions, which then serve as the basis for user identification, membership verification, and authorization checks.
 
 ---
 
-## Authorization Layers
+## Authentication & Authorization Architecture
+
+### Authentication Flow
 
 ```
-Request to API Route
+signInAnonymously()
   ↓
-1. User Identification (localStorage memberId)
+Supabase authenticated user (auth.uid())
   ↓
-2. API Authorization Check (business logic)
+member.user_id = auth.uid()
   ↓
-3. Database Operation (RLS policies enforce)
-  ↓
-4. Response with error handling
+Book club membership & permissions
 ```
+
+**Key points:**
+- `signInAnonymously()` creates an authenticated Supabase session
+- `auth.uid()` uniquely identifies the authenticated user
+- `member.user_id` bridges auth identity to book club membership
+- RLS policies and RPC functions use `auth.uid()` for authorization
+
+### Authorization Layers
+
+BookClub uses multiple authorization mechanisms working together:
+
+1. **Supabase authenticated session** — Requires `signInAnonymously()`
+2. **Table privilege** — Authenticated role has SELECT/INSERT/UPDATE permissions
+3. **RLS policies** — Row-level security enforces data isolation
+4. **SECURITY DEFINER RPC** — Functions with elevated privileges perform protected operations
+5. **RPC internal validation** — `auth.uid()` checks within RPC functions (membership, host status)
 
 ---
 
-## Core Authorization Pattern
+## Data Access Patterns
 
-### 1. Extract User Identity
+### Pattern 1: SECURITY DEFINER RPC (Protected Operations)
+
+Used for operations requiring elevation above user's direct RLS permissions:
 
 ```typescript
-// API route handler
-export async function POST(req: Request) {
-  const memberId = req.headers.get('x-member-id');
-  
-  if (!memberId) {
-    return res.status(401).json({ message: 'Unauthorized' });
-  }
-  
-  return handleRequest(memberId);
-}
+// Client code
+const { data, error } = await supabase.rpc('create_book_club_with_host', {
+  p_name: name,
+  p_invite_code: inviteCode,
+  p_host_nickname: hostNickname,
+  p_book_title: bookTitle,
+  p_meeting_date: meetingDate,
+});
 ```
 
-### 2. Verify User Ownership
+**Inside RPC (SECURITY DEFINER):**
+```sql
+-- RPC runs with elevated privileges
+-- Captures current user once
+v_current_user_id := auth.uid();
 
-```typescript
-// Helper: Get current user's member record
-async function getCurrentMember(memberId: string, bookClubId: string) {
-  const { data: member, error } = await supabase
-    .from('member')
-    .select()
-    .eq('id', memberId)
-    .eq('book_club_id', bookClubId)
-    .single();
-  
-  if (error || !member) {
-    throw new Error('Member not found');
-  }
-  
-  return member;
-}
+-- Uses auth.uid() for membership creation
+INSERT INTO member (book_club_id, user_id, nickname, is_host, joined_at, ...)
+VALUES (v_book_club_id, v_current_user_id, p_host_nickname, true, now(), ...);
 ```
 
-### 3. Verify Permission for Operation
+### Pattern 2: Direct Query with RLS
+
+Used for reading or writing data where user's RLS permissions suffice:
 
 ```typescript
-// Helper: Check if user is host of book club
-async function isHost(memberId: string, bookClubId: string): Promise<boolean> {
-  const member = await getCurrentMember(memberId, bookClubId);
-  return member.is_host;
-}
-
-// Usage in API route
-const isHost = await isHost(memberId, bookClubId);
-if (!isHost) {
-  return res.status(403).json({ 
-    message: 'Only host can perform this action' 
+// Client code - RLS automatically filters to current user
+const { data, error } = await supabase
+  .from('reading_record')
+  .insert({
+    meeting_id: meetingId,
+    member_id: memberId,
+    memorable_quote: quote,
   });
-}
 ```
+
+**RLS policy enforces:** Only members of the book club can insert reading records
 
 ---
 
-## Authorization by Feature
+## Data Access by Feature
 
 ### F01: Create Book Club
 
-**Who can do it:** Any user (new book club creator)
+**Who can do it:** Any authenticated user (new book club creator)
 
-**Authorization check:** None (new user, no membership yet)
+**Authorization:** 
+- User must be authenticated (`signInAnonymously()`)
+- New book clubs are created by the authenticated user as host
+- No prior membership required
 
-**API responsibility:**
+**Implementation:**
+
+Uses `create_book_club_with_host()` SECURITY DEFINER RPC to ensure atomic operation:
+
 ```typescript
-export async function POST(req: Request) {
-  const { name, nickname, bookTitle, meetingDate } = await req.json();
-  
-  // 1. Validate input
-  if (!name || !nickname || !bookTitle) {
-    return res.status(400).json({ message: 'Invalid input' });
-  }
-  
-  // 2. Create book club
-  const { data: bookClub, error: clubError } = await supabase
-    .from('book_club')
-    .insert([{
-      name,
-      invite_code: generateInviteCode()
-    }])
-    .select()
-    .single();
-  
-  if (clubError) {
-    return res.status(500).json({ message: 'Failed to create club' });
-  }
-  
-  // 3. Create host member record
-  const { data: member, error: memberError } = await supabase
-    .from('member')
-    .insert([{
-      book_club_id: bookClub.id,
-      nickname,
-      is_host: true
-    }])
-    .select()
-    .single();
-  
-  if (memberError) {
-    return res.status(500).json({ message: 'Failed to create member' });
-  }
-  
-  // 4. Create first meeting
-  const { data: meeting } = await supabase
-    .from('meeting')
-    .insert([{
-      book_club_id: bookClub.id,
-      book_title: bookTitle,
-      meeting_date: meetingDate || new Date().toISOString().split('T')[0],
-      status: 'scheduled'
-    }])
-    .select()
-    .single();
-  
-  // 5. Return new member ID and book club ID
-  return res.status(201).json({
-    bookClubId: bookClub.id,
-    memberId: member.id,
-    meetingId: meeting.id
+// lib/book-clubs.ts
+export async function createBookClub(
+  name: string,
+  inviteCode: string,
+  hostNickname: string,
+  bookTitle: string,
+  meetingDate: string | null
+): Promise<CreateBookClubResponse> {
+  const supabase = createClient();
+
+  const { data, error } = await supabase.rpc("create_book_club_with_host", {
+    p_name: name,
+    p_invite_code: inviteCode,
+    p_host_nickname: hostNickname,
+    p_book_title: bookTitle,
+    p_meeting_date: meetingDate,
   });
+
+  if (error) {
+    throw new Error(`Failed to create book club: ${error.message}`);
+  }
+
+  return {
+    bookClubId: data[0].book_club_id,
+    memberId: data[0].member_id,
+    meetingId: data[0].meeting_id,
+  };
 }
 ```
 
-**RLS Interaction:** No RLS needed (API creates records via service role).
+**RPC Authorization:**
+- Function is SECURITY DEFINER (elevated privileges)
+- Captures `auth.uid()` to set `member.user_id`
+- Creates `book_club`, `member` (with `is_host=true`), and first `meeting` atomically
+- Returns: `(book_club_id, member_id, meeting_id)`
+
+**RLS Interaction:** RPC operates with elevated privileges; RLS policies are not consulted during creation.
 
 ---
 
 ### F04: Join Book Club
 
-**Who can do it:** Any authenticated user
+**Who can do it:** Any authenticated user with valid invite code
 
-**Authorization check:** None (new member)
+**Authorization:**
+- User must be authenticated (`signInAnonymously()`)
+- User identity is `auth.uid()`
+- Duplicate membership check: User cannot join same club twice (checked by `user_id`)
 
-**API responsibility:**
+**Implementation:**
+
+Uses `join_book_club()` SECURITY DEFINER RPC:
+
 ```typescript
-export async function POST(req: Request) {
-  const { inviteCode, nickname } = await req.json();
-  
-  // 1. Find book club by invite code
-  const { data: bookClub, error: clubError } = await supabase
-    .from('book_club')
-    .select()
-    .eq('invite_code', inviteCode)
-    .single();
-  
-  if (clubError || !bookClub) {
-    return res.status(404).json({ 
-      message: 'Book club not found' 
-    });
-  }
-  
-  // 2. Check if already a member
-  const { data: existing } = await supabase
-    .from('member')
-    .select('id')
-    .eq('book_club_id', bookClub.id)
-    // After TASK 04: .eq('user_id', auth.uid())
-    .eq('nickname', nickname); // Current MVP workaround
-  
-  if (existing && existing.length > 0) {
-    return res.status(400).json({ 
-      message: 'Already a member of this club' 
-    });
-  }
-  
-  // 3. Create member record
-  const { data: member, error: memberError } = await supabase
-    .from('member')
-    .insert([{
-      book_club_id: bookClub.id,
-      nickname,
-      is_host: false
-    }])
-    .select()
-    .single();
-  
-  if (memberError) {
-    return res.status(500).json({ 
-      message: 'Failed to join club' 
-    });
-  }
-  
-  // 4. Return member ID for localStorage
-  return res.status(201).json({
-    bookClubId: bookClub.id,
-    memberId: member.id
+// lib/members.ts
+export async function joinBookClub(
+  inviteCode: string,
+  nickname: string
+): Promise<JoinBookClubResponse> {
+  const supabase = createClient();
+
+  const { data, error } = await supabase.rpc("join_book_club", {
+    p_invite_code: inviteCode,
+    p_nickname: nickname,
   });
+
+  if (error) {
+    throw new Error(`Failed to join book club: ${error.message}`);
+  }
+
+  return {
+    bookClubId: data[0].book_club_id,
+    memberId: data[0].member_id,
+  };
 }
 ```
 
-**RLS Interaction:** INSERT on member table via RLS (after TASK 04).
+**RPC Authorization:**
+- Function is SECURITY DEFINER
+- Captures `auth.uid()` once at start: `v_current_user_id := auth.uid()`
+- Validates invite code exists
+- Checks duplicate membership: `WHERE user_id = v_current_user_id AND book_club_id = ...`
+- Creates `member` record with `user_id = v_current_user_id` and `is_host = false`
+- Returns: `(book_club_id, member_id)`
+
+**RLS Interaction:** RPC operates with elevated privileges; user cannot directly insert into member table without RPC.
 
 ---
 
 ### F05: Create/Update Reading Record
 
-**Who can do it:** Any club member
+**Who can do it:** Any book club member
 
-**Authorization checks:**
-- User is member of the book club
-- User owns the reading record (for updates)
-- Meeting hasn't started (for updates)
+**Authorization:**
+- User must be authenticated
+- User must be member of the book club (verified via RLS)
+- User owns the reading record (member_id must match the member they created in book club)
+- Can only create/update before meeting starts (status='scheduled')
 
-**API responsibility:**
+**Implementation:**
+
+Uses direct queries with RLS policies. Client-side application logic handles UI workflow:
 
 ```typescript
-export async function POST(req: Request) {
-  const memberId = req.headers.get('x-member-id');
-  const { bookClubId, meetingId, data: recordData } = await req.json();
-  
-  // 1. Verify user is member of this club
-  const member = await getCurrentMember(memberId, bookClubId);
-  if (!member) {
-    return res.status(403).json({ 
-      message: 'Not a member of this club' 
-    });
-  }
-  
-  // 2. Verify meeting exists and belongs to this club
-  const { data: meeting, error: meetingError } = await supabase
-    .from('meeting')
-    .select('status')
-    .eq('id', meetingId)
-    .eq('book_club_id', bookClubId)
-    .single();
-  
-  if (meetingError || !meeting) {
-    return res.status(404).json({ 
-      message: 'Meeting not found' 
-    });
-  }
-  
-  // 3. Check if already has record for this meeting
-  const { data: existing } = await supabase
-    .from('reading_record')
-    .select('id')
-    .eq('meeting_id', meetingId)
-    .eq('member_id', memberId);
-  
-  if (existing && existing.length > 0) {
-    // User has record - treat as update
-    return updateReadingRecord(memberId, meetingId, recordData, meeting);
-  } else {
-    // New record
-    return createReadingRecord(memberId, meetingId, recordData);
-  }
-}
+// lib/reading-records.ts
+export async function createReadingRecord(
+  meetingId: string,
+  memberId: string,
+  data: CreateReadingRecordData
+): Promise<string> {
+  const supabase = createClient();
 
-async function createReadingRecord(memberId: string, meetingId: string, data: any) {
-  const { data: record, error } = await supabase
+  const { data: result, error } = await supabase
     .from('reading_record')
-    .insert([{
+    .insert({
       meeting_id: meetingId,
       member_id: memberId,
-      memorable_quote: data.memQuote || '',
-      discussion_question: data.question || '',
-      takeaway: data.takeaway || ''
-    }])
-    .select()
+      memorable_quote: data.memorableQuote || null,
+      discussion_question: data.discussionQuestion || null,
+      takeaway: data.takeaway || null,
+    })
+    .select('id')
     .single();
-  
+
   if (error) {
-    return res.status(500).json({ 
-      message: 'Failed to create record' 
-    });
+    throw new Error(`Failed to create reading record: ${error.message}`);
   }
-  
-  return res.status(201).json({ recordId: record.id });
+
+  return result.id;
 }
 
-async function updateReadingRecord(
-  memberId: string,
-  meetingId: string,
-  data: any,
-  meeting: any
-) {
-  // 4. Check if meeting started (can't edit after start)
-  if (meeting.status === 'in_progress' || meeting.status === 'completed') {
-    return res.status(403).json({ 
-      message: 'Cannot edit record after meeting starts' 
-    });
+export async function updateReadingRecord(
+  recordId: string,
+  data: UpdateReadingRecordData
+): Promise<void> {
+  const supabase = createClient();
+
+  const updatePayload: Record<string, unknown> = {
+    updated_at: new Date().toISOString(),
+  };
+
+  if (data.memorableQuote !== undefined) {
+    updatePayload.memorable_quote = data.memorableQuote || null;
   }
-  
-  // 5. Update record
-  const { data: record, error } = await supabase
+  if (data.discussionQuestion !== undefined) {
+    updatePayload.discussion_question = data.discussionQuestion || null;
+  }
+  if (data.takeaway !== undefined) {
+    updatePayload.takeaway = data.takeaway || null;
+  }
+
+  const { error } = await supabase
     .from('reading_record')
-    .update({
-      memorable_quote: data.memQuote || '',
-      discussion_question: data.question || '',
-      takeaway: data.takeaway || ''
-    })
-    .eq('meeting_id', meetingId)
-    .eq('member_id', memberId)
-    .select()
-    .single();
-  
+    .update(updatePayload)
+    .eq('id', recordId);
+
   if (error) {
-    return res.status(500).json({ 
-      message: 'Failed to update record' 
-    });
+    throw new Error(`Failed to update reading record: ${error.message}`);
   }
-  
-  return res.status(200).json({ recordId: record.id });
 }
 ```
 
-**RLS Interaction:**
-- INSERT on reading_record via RLS (after TASK 04)
-- UPDATE on reading_record via RLS (checks meeting status)
+**RLS Policies (enforce authorization):**
+- INSERT: User must be member of the book club (RLS checks `auth.uid()`)
+- SELECT: User can read reading records from meetings in clubs they belong to
+- UPDATE: User can update only their own records (RLS checks `member_id` and `auth.uid()`)
 
-**Error Messages:**
-- Not a member → 403 Forbidden
-- Meeting not found → 404 Not Found
-- Meeting started → 403 Forbidden
-- DB error → 500 Internal Server Error
+**Application-level checks:**
+- Meeting hasn't started (check `meeting.status !== 'scheduled'`)
+- Application prevents editing after meeting starts by disabling UI, but RLS provides backup enforcement
 
 ---
 
 ### F06: Start Meeting (Host-only)
 
-**Who can do it:** Meeting host only
+**Who can do it:** Book club host only
 
-**Authorization check:** User must be host of the book club
+**Authorization:**
+- User must be authenticated
+- User must be host of the book club (checked by RPC via `is_book_club_host()` helper)
+- Meeting must exist and have status='scheduled'
 
-**API responsibility:**
+**Implementation:**
+
+Uses `start_meeting()` SECURITY DEFINER RPC:
 
 ```typescript
-export async function POST(req: Request) {
-  const memberId = req.headers.get('x-member-id');
-  const { bookClubId, meetingId } = await req.json();
-  
-  // 1. Verify user is member of this club
-  const member = await getCurrentMember(memberId, bookClubId);
-  if (!member) {
-    return res.status(403).json({ message: 'Not a member' });
-  }
-  
-  // 2. Verify user is host
-  if (!member.is_host) {
-    return res.status(403).json({ 
-      message: 'Only host can start meeting' 
-    });
-  }
-  
-  // 3. Verify meeting exists and belongs to this club
-  const { data: meeting } = await supabase
-    .from('meeting')
-    .select('status')
-    .eq('id', meetingId)
-    .eq('book_club_id', bookClubId)
-    .single();
-  
-  if (!meeting) {
-    return res.status(404).json({ message: 'Meeting not found' });
-  }
-  
-  // 4. Check if already started
-  if (meeting.status !== 'scheduled') {
-    return res.status(400).json({ 
-      message: `Cannot start meeting with status: ${meeting.status}` 
-    });
-  }
-  
-  // 5. Update meeting status
-  const { data: updatedMeeting, error: updateError } = await supabase
-    .from('meeting')
-    .update({ status: 'in_progress' })
-    .eq('id', meetingId)
-    .select()
-    .single();
-  
-  if (updateError) {
-    return res.status(500).json({ message: 'Failed to start meeting' });
-  }
-  
-  // 6. Create session record
-  const { data: session, error: sessionError } = await supabase
-    .from('session')
-    .insert([{
-      meeting_id: meetingId,
-      current_step: 'icebreaker',
-      current_question_index: 0,
-      remaining_seconds: 300, // 5 minutes for icebreaker
-      started_at: new Date().toISOString()
-    }])
-    .select()
-    .single();
-  
-  if (sessionError) {
-    return res.status(500).json({ message: 'Failed to create session' });
-  }
-  
-  return res.status(200).json({
-    meetingId: updatedMeeting.id,
-    sessionId: session.id,
-    status: 'in_progress'
+// lib/sessions.ts
+export async function startMeeting(meetingId: string): Promise<string> {
+  const supabase = createClient();
+
+  const { data, error } = await supabase.rpc("start_meeting", {
+    p_meeting_id: meetingId,
   });
+
+  if (error) {
+    throw new Error(`Failed to start meeting: ${error.message}`);
+  }
+
+  if (!data) {
+    throw new Error("Starting meeting returned no session id");
+  }
+
+  return data;
 }
 ```
 
-**RLS Interaction:**
-- No RLS used (API handles via service role)
-- RLS prevents direct updates to meeting status
-- Session creation via API with proper authorization
+**RPC Authorization:**
+- Function is SECURITY DEFINER
+- Calls helper `is_book_club_host(p_book_club_id)` which checks:
+  - User (`auth.uid()`) is a member of the book club
+  - User's member record has `is_host = true`
+- Updates `meeting.status` to 'in_progress'
+- Creates `session` record with `current_step='icebreaker'`
+- Returns: session ID
 
-**Authorization Verification:**
-1. User is authenticated (has memberId)
-2. User is member of book club
-3. User is host (`is_host = true`)
-4. Meeting status is valid for start
+**RLS Interaction:** RPC performs updates with elevated privileges. Direct updates to `meeting` and `session` tables require RPC authorization.
 
 ---
 
 ### F11: Create New Meeting Round (Host-only)
 
-**Who can do it:** Meeting host only
+**Who can do it:** Book club host only
 
-**Authorization check:** User must be host
+**Authorization:**
+- User must be authenticated
+- User must be host of the book club (checked by RPC via `is_book_club_host()` helper)
 
-**API responsibility:**
+**Implementation:**
+
+Uses `create_meeting()` SECURITY DEFINER RPC:
 
 ```typescript
-export async function POST(req: Request) {
-  const memberId = req.headers.get('x-member-id');
-  const { bookClubId, bookTitle, meetingDate } = await req.json();
-  
-  // 1-3. Verify member and host (same as F06)
-  const member = await getCurrentMember(memberId, bookClubId);
-  if (!member) return res.status(403).json({ message: 'Not a member' });
-  if (!member.is_host) return res.status(403).json({ message: 'Host only' });
-  
-  // 4. Create new meeting
-  const { data: meeting, error } = await supabase
-    .from('meeting')
-    .insert([{
-      book_club_id: bookClubId,
-      book_title: bookTitle,
-      meeting_date: meetingDate || new Date().toISOString().split('T')[0],
-      status: 'scheduled'
-    }])
-    .select()
+// This feature uses the RPC create_meeting function
+// which is called internally or through lib/meetings.ts
+const { data: meetingId, error } = await supabase.rpc('create_meeting', {
+  p_book_club_id: bookClubId,
+  p_book_title: bookTitle,
+  p_meeting_date: meetingDate,
+});
+```
+
+**RPC Authorization:**
+- Function is SECURITY DEFINER
+- Calls helper `is_book_club_host(p_book_club_id)` which checks:
+  - User (`auth.uid()`) is a member of the book club
+  - User's member record has `is_host = true`
+- Creates new `meeting` record with status='scheduled'
+- Returns: meeting ID
+
+---
+
+## Common Authorization Patterns in BookClub
+
+### Pattern 1: RPC-Based Protected Operations
+
+Operations that need elevated privileges use SECURITY DEFINER RPC:
+
+```typescript
+// create_book_club_with_host(p_name, p_invite_code, p_host_nickname, ...)
+const { data, error } = await supabase.rpc('create_book_club_with_host', {
+  p_name: clubName,
+  p_invite_code: inviteCode,
+  p_host_nickname: hostNickname,
+  p_book_title: bookTitle,
+  p_meeting_date: meetingDate,
+});
+
+// Returns: (book_club_id, member_id, meeting_id)
+// Authorization: Captures auth.uid() inside RPC
+```
+
+### Pattern 2: User Lookup via auth.uid()
+
+Finding the current user's member record in a book club:
+
+```typescript
+// lib/members.ts
+export async function getMemberByUserId(
+  bookClubId: string,
+  userId: string
+): Promise<Member | null> {
+  const supabase = createClient();
+
+  const { data, error } = await supabase
+    .from('member')
+    .select('id, book_club_id, nickname, is_host, joined_at, user_id')
+    .eq('book_club_id', bookClubId)
+    .eq('user_id', userId)
     .single();
-  
+
   if (error) {
-    return res.status(500).json({ message: 'Failed to create meeting' });
+    if (error.code === "PGRST116") {
+      return null; // Not found
+    }
+    throw new Error(`Failed to fetch member by user ID: ${error.message}`);
   }
-  
-  return res.status(201).json({
-    meetingId: meeting.id,
-    status: meeting.status
-  });
+
+  return { /* member data */ };
 }
+
+// Usage: Find current user's member record to check is_host
+const member = await getMemberByUserId(bookClubId, auth.uid());
+```
+
+### Pattern 3: RLS-Protected Queries
+
+Reading data where RLS policies provide authorization:
+
+```typescript
+// Reading records - RLS filters to records user can access
+const { data: records } = await supabase
+  .from('reading_record')
+  .select('id, meeting_id, member_id, memorable_quote, ...')
+  .eq('meeting_id', meetingId);
+
+// RLS policy: User must be member of the book club
+// If user is not a member, RLS returns error or empty result
+```
+
+### Pattern 4: Direct Query with Explicit ID Checks
+
+For operations not covered by RLS, application performs explicit checks:
+
+```typescript
+// Before allowing an update, verify user owns the record
+const existingRecord = await getReadingRecord(meetingId, memberId);
+if (!existingRecord) {
+  throw new Error('Record not found');
+}
+
+// Then proceed with update
+await updateReadingRecord(recordId, data);
 ```
 
 ---
 
-## Common Authorization Patterns
+## Error Handling
 
-### Pattern 1: Owner-Only Access
+### Error Sources and Responses
+
+Errors can come from RPC functions or RLS policies:
+
+**RPC Function Errors (SECURITY DEFINER):**
+```sql
+-- Examples from create_book_club_with_host, join_book_club
+RAISE EXCEPTION 'Book club name cannot be empty';
+RAISE EXCEPTION 'Invite code cannot be empty';
+RAISE EXCEPTION 'Invalid invite code';
+RAISE EXCEPTION 'You are already a member of this book club';
+RAISE EXCEPTION 'Only the host can create new meetings';
+```
+
+**RLS Policy Errors:**
+```
+Code: PGRST201 (RLS policy violation)
+Message: "You do not have permission for this action"
+→ Typically: User not member of club, or record access denied
+```
+
+**Unique Constraint Errors:**
+```
+Code: 23505 (Unique violation)
+→ Examples: Duplicate member (user_id + book_club_id), 
+  duplicate reading record (meeting_id + member_id)
+```
+
+### Client-Side Error Handling
+
+Application catches errors from Supabase calls and handles them:
 
 ```typescript
-async function verifyOwner(memberId: string, recordId: string) {
-  const { data: record } = await supabase
-    .from('reading_record')
-    .select('member_id')
-    .eq('id', recordId)
-    .single();
-  
-  if (record.member_id !== memberId) {
-    throw new Error('Unauthorized');
-  }
-}
-
-// Usage
 try {
-  await verifyOwner(memberId, readingRecordId);
-  // Proceed with update
-} catch {
-  return res.status(403).json({ message: 'Unauthorized' });
-}
-```
-
-### Pattern 2: Club Membership
-
-```typescript
-async function verifyClubMember(memberId: string, bookClubId: string) {
-  const { data: member, error } = await supabase
-    .from('member')
-    .select('id')
-    .eq('id', memberId)
-    .eq('book_club_id', bookClubId)
-    .single();
-  
-  if (error || !member) {
-    throw new Error('Not a member');
+  const response = await joinBookClub(inviteCode, nickname);
+  // Success
+} catch (error) {
+  if (error.message.includes('Invalid invite code')) {
+    // Show user-friendly message
+    setError('Book club not found with this invite code');
+  } else if (error.message.includes('already a member')) {
+    setError('You are already a member of this club');
+  } else {
+    setError('Failed to join club. Please try again.');
   }
-}
-
-// Usage
-try {
-  await verifyClubMember(memberId, bookClubId);
-  // Proceed with operation
-} catch {
-  return res.status(403).json({ message: 'Not a member' });
-}
-```
-
-### Pattern 3: Host-Only Operations
-
-```typescript
-async function verifyHost(memberId: string, bookClubId: string) {
-  const { data: member } = await supabase
-    .from('member')
-    .select('is_host')
-    .eq('id', memberId)
-    .eq('book_club_id', bookClubId)
-    .single();
-  
-  if (!member?.is_host) {
-    throw new Error('Not authorized');
-  }
-}
-
-// Usage
-try {
-  await verifyHost(memberId, bookClubId);
-  // Proceed with host operation
-} catch {
-  return res.status(403).json({ message: 'Host only' });
-}
-```
-
-### Pattern 4: Time-Based Access
-
-```typescript
-async function verifyMeetingNotStarted(meetingId: string) {
-  const { data: meeting } = await supabase
-    .from('meeting')
-    .select('status')
-    .eq('id', meetingId)
-    .single();
-  
-  if (meeting.status === 'in_progress') {
-    throw new Error('Meeting already started');
-  }
-}
-
-// Usage
-try {
-  await verifyMeetingNotStarted(meetingId);
-  // Allow editing
-} catch {
-  return res.status(403).json({ message: 'Cannot edit - meeting started' });
-}
-```
-
----
-
-## Error Handling Strategy
-
-### Standard Error Response Format
-
-```typescript
-interface ErrorResponse {
-  message: string;           // User-friendly message
-  code?: string;            // Error code for frontend
-  details?: string;         // Technical details (dev mode only)
-}
-
-// Examples
-{
-  "message": "Not a member of this club",
-  "code": "NOT_MEMBER"
-}
-
-{
-  "message": "Only host can perform this action",
-  "code": "HOST_ONLY"
-}
-
-{
-  "message": "Cannot edit reading record after meeting starts",
-  "code": "MEETING_STARTED"
-}
-```
-
-### RLS Error Translation
-
-```typescript
-async function handleDatabaseError(error: any) {
-  if (error.code === 'PGRST201') {
-    // RLS denied
-    return {
-      status: 403,
-      message: 'You do not have permission for this action'
-    };
-  }
-  
-  if (error.code === '23505') {
-    // Unique constraint
-    return {
-      status: 400,
-      message: 'This record already exists'
-    };
-  }
-  
-  if (error.code === '23503') {
-    // Foreign key constraint
-    return {
-      status: 404,
-      message: 'Referenced record not found'
-    };
-  }
-  
-  // Generic error
-  return {
-    status: 500,
-    message: 'Database error'
-  };
 }
 ```
 
@@ -650,128 +492,92 @@ async function handleDatabaseError(error: any) {
 
 ## Testing Authorization
 
-### Unit Test Example
+### Testing Strategy
+
+Authorization is tested at multiple levels:
+
+1. **RPC function level** — Validate authorization checks inside SECURITY DEFINER functions
+2. **RLS policy level** — Verify RLS policies enforce row-level access
+3. **Application level** — Playwright E2E tests verify user flows
+
+### Example: Join Book Club Authorization
 
 ```typescript
-import { POST } from '@/app/api/create-reading-record/route';
+// Test: Non-authenticated user cannot join
+it('should fail if user not authenticated', async () => {
+  // signInAnonymously() not called
+  expect(() => joinBookClub(inviteCode, nickname))
+    .toThrow('Failed to join book club');
+});
 
-describe('Create Reading Record Authorization', () => {
-  it('should allow member to create record', async () => {
-    const req = new Request('http://localhost/api/create-reading-record', {
-      method: 'POST',
-      headers: { 'x-member-id': validMemberId },
-      body: JSON.stringify({
-        bookClubId,
-        meetingId,
-        data: { memQuote: 'test' }
-      })
-    });
-    
-    const res = await POST(req);
-    expect(res.status).toBe(201);
-  });
-  
-  it('should deny non-member', async () => {
-    const req = new Request('http://localhost/api/create-reading-record', {
-      method: 'POST',
-      headers: { 'x-member-id': otherClubMemberId },
-      body: JSON.stringify({
-        bookClubId,
-        meetingId,
-        data: { memQuote: 'test' }
-      })
-    });
-    
-    const res = await POST(req);
-    expect(res.status).toBe(403);
-  });
-  
-  it('should deny update after meeting starts', async () => {
-    // Setup: meeting status = 'in_progress'
-    
-    const req = new Request('http://localhost/api/create-reading-record', {
-      method: 'POST',
-      headers: { 'x-member-id': validMemberId },
-      body: JSON.stringify({
-        bookClubId,
-        meetingId: startedMeetingId,
-        data: { memQuote: 'updated' }
-      })
-    });
-    
-    const res = await POST(req);
-    expect(res.status).toBe(403);
-  });
+// Test: User cannot join with invalid invite code
+it('should fail with invalid invite code', async () => {
+  await signInAnonymously();
+  expect(() => joinBookClub('INVALID', nickname))
+    .toThrow('Invalid invite code');
+});
+
+// Test: User cannot join same club twice (auth.uid() check)
+it('should fail if already a member', async () => {
+  await signInAnonymously();
+  const response1 = await joinBookClub(validInviteCode, 'Alice');
+  expect(response1.memberId).toBeDefined();
+
+  // Same user tries to join again
+  const response2 = await joinBookClub(validInviteCode, 'Alice2');
+  expect(() => response2).toThrow('You are already a member');
 });
 ```
 
----
-
-## Migration to TASK 04 (Authentication)
-
-### Before TASK 04
-
-- Extract `memberId` from localStorage
-- Pass via `x-member-id` header
-- Verify membership at API level
-- Use service role for database operations
-
-### During TASK 04
-
-- User logs in with Supabase auth
-- Get access token from auth session
-- Pass token to Supabase client
-- API validates token (next.js middleware)
-
-### After TASK 04
+### Example: Host-Only Operation Authorization
 
 ```typescript
-// Middleware verifies auth token
-import { createMiddlewareClient } from '@supabase/auth-helpers-nextjs';
+// Test: Only host can start meeting
+it('should deny non-host from starting meeting', async () => {
+  // Setup: User1 is host, User2 is regular member
+  const user1 = await signInAnonymously();
+  const { meetingId } = await createBookClub(clubName, inviteCode, 'User1', bookTitle, date);
 
-export async function middleware(req: NextRequest) {
-  const supabase = createMiddlewareClient({ req, res: NextResponse.next() });
-  const { data: { session } } = await supabase.auth.getSession();
-  
-  if (!session) {
-    return NextResponse.redirect(new URL('/login', req.url));
-  }
-  
-  return NextResponse.next();
-}
-```
+  // User2 joins as regular member
+  await signInAnonymously(); // Different auth.uid()
+  await joinBookClub(inviteCode, 'User2');
 
-### RLS Integration
-
-```typescript
-// After TASK 04, use authenticated client for RLS
-const { data: records } = await supabase
-  .from('reading_record')
-  .select()
-  // RLS automatically filters to user's records
-  .eq('meeting_id', meetingId);
-  // No need for manual member verification
+  // Try to start meeting as User2
+  expect(() => startMeeting(meetingId))
+    .toThrow('Only the host can create new meetings');
+});
 ```
 
 ---
 
 ## Security Checklist
 
-- [ ] All APIs extract and validate user identity
-- [ ] All write operations verify user authorization
-- [ ] Host-only operations check `is_host` flag
-- [ ] Time-based restrictions enforced (can't edit after start)
-- [ ] Error messages don't leak sensitive info
-- [ ] RLS policies provide backup security
-- [ ] Audit trail maintained (no deletes)
-- [ ] After TASK 04: Authenticated client for RLS
+- [x] User authenticated via `signInAnonymously()`
+- [x] User identity stored in `auth.uid()`
+- [x] Member records link to `auth.uid()` via `user_id`
+- [x] SECURITY DEFINER RPC functions validate authorization
+- [x] `is_book_club_host()` helper checks host status
+- [x] Host-only operations protected by RPC
+- [x] RLS policies enforce row-level access
+- [x] Duplicate membership prevented (`UNIQUE(user_id, book_club_id)`)
+- [x] Error messages don't leak sensitive info
+- [x] No direct INSERT into protected tables (use RPC)
 
 ---
 
 ## References
 
-- [Main Authorization Layer in API](../app/api/)
-- [RLS Policies Design (9-RLS-SECURITY.md)](./9-RLS-SECURITY.md)
-- [Feature Specification (5-FEATURE-SPEC.md)](./5-FEATURE-SPEC.md)
-- [Next.js API Routes](https://nextjs.org/docs/app/building-your-application/routing/route-handlers)
+**Data Access Implementation:**
+- `lib/auth.ts` — Authentication via `signInAnonymously()` and `getCurrentUser()`
+- `lib/book-clubs.ts` — Book club creation and lookup (RPC `create_book_club_with_host`)
+- `lib/members.ts` — Membership operations (RPC `join_book_club`)
+- `lib/reading-records.ts` — Reading record CRUD (direct queries with RLS)
+- `lib/sessions.ts` — Meeting sessions (RPC `start_meeting`, `update_session_step`, `advanceQuestion`)
+
+**Security & RLS:**
+- [RLS Policies Design (9-RLS-SECURITY.md)](./9-RLS-SECURITY.md) — Table policies and helper functions
+- `supabase/migrations/20260901_enable_rls_and_policies.sql` — RPC function definitions
+
+**Product Context:**
+- [Feature Specification (5-FEATURE-SPEC.md)](./5-FEATURE-SPEC.md) — Feature requirements and workflows
 

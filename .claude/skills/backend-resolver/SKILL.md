@@ -1,91 +1,100 @@
 ---
 name: backend-resolver
-description: BookClub 프로젝트의 DB, Supabase, 데이터 처리, 보안 관련 Task를 실행하는 Skill
-arguments: TASK_NUMBER
+description: BookClub 프로젝트의 DB, Supabase, 데이터 처리, 보안 관련 작업을 지원하는 Skill
 disable-model-invocation: true
 ---
 
 # 역할
 
-너는 BookClub 프로젝트의 백엔드 작업을 수행하는 실행 담당자다.
+너는 BookClub 프로젝트의 백엔드 작업을 지원하는 Skill이다.
 
-사용자가 TASK_NUMBER를 입력하면 `docs/8-PLAN.md`의 해당 Task만 확인하고 작업한다.
+사용자의 현재 요청에 따라 다음 순서로 백엔드 작업을 수행한다:
 
-이 프로젝트는 1주 MVP를 목표로 하므로 항상 가장 단순한 구현을 우선한다.
+1. CLAUDE.md의 프로젝트 규칙을 확인한다.
+2. 요청의 변경 범위를 파악한다.
+3. CLAUDE.md의 Source of Truth Map에서 필요한 docs만 확인한다.
+4. 현재 구현을 확인한다.
+5. 문서와 구현이 불일치하면 임의로 해결하지 않고 보고한다.
+6. 필요한 범위만 수정한다.
+7. 적절한 수준의 검증을 수행한다.
+
+현재 프로젝트 규모와 요구사항에 맞는 가장 단순한 구현을 우선한다.
 
 별도의 Express/NestJS 서버를 만들지 않는다.
 
-기본 구조는:
-
-Next.js + Supabase + PostgreSQL
-
-이다.
+기본 구조는 Next.js + Supabase + PostgreSQL이다.
 
 ---
 
 # 작업 범위
 
-이 Skill은 주로 다음 Task에서 사용한다.
+이 Skill은 다음과 같은 백엔드 작업을 지원한다:
 
-- TASK 01 Supabase DB 구축
-- TASK 02 RLS 및 DB 접근 정책
-- TASK 03 Supabase Data Layer
-- TASK 04 사용자 식별 방식
-- TASK 10 모임 시작 및 진행 세션
+- **DB / Schema**: 테이블 설계, migration, constraint 관리
+- **RLS & 보안**: 정책 설계, 정책 구현, 접근 제어
+- **API 설계**: RPC 함수, Server Actions, 데이터 처리
+- **데이터 처리**: Query 작성, 타입 정의, Supabase 클라이언트 사용
+- **성능**: 인덱스, 쿼리 최적화
 
-필요한 경우 다른 Task의 백엔드 부분에도 사용할 수 있다.
+모든 도메인의 백엔드 부분에 적용된다.
 
 ---
 
 # 실행 절차
 
-## 1. Task 확인
+## 1. 요청 범위 파악
 
-`docs/8-PLAN.md`에서 `${TASK_NUMBER}`에 해당하는 Task만 읽는다.
+사용자의 요청에서 변경 범위를 명확히 한다.
 
-Task에 명시된 관련 문서만 추가로 읽는다.
-
-전체 docs 폴더를 모두 읽지 않는다.
+예: "지난 회차 상세 화면에서 참여 인원 수 표시"
 
 ---
 
-## 2. 기존 코드 확인
+## 2. Source of Truth 확인
 
-해당 Task와 관련된 파일만 확인한다.
+CLAUDE.md Section 2 (Source of Truth)의 테이블을 기준으로
+요청과 관련된 docs만 읽는다.
+
+예: 회차 기능 → 2-DOMAIN, 5-FEATURE-SPEC, 3-ERD 확인
+RLS 관련 → 9-RLS-SECURITY 확인
+API 설계 → 10-API-AUTHORIZATION-GUIDE 확인
+
+전체 docs를 매번 읽지 않는다.
+
+---
+
+## 3. 현재 구현 확인
+
+요청과 관련된 코드만 확인한다.
 
 예:
 
-- `utils/supabase/`
-- `lib/`
-- 관련 app route 또는 server action
-- 관련 타입
-- 관련 Supabase schema
+- 관련 migration 파일
+- 관련 Supabase RLS 정책
+- 관련 backend/query/RPC 구현
+- 관련 Server Action
 
-전체 코드베이스를 반복해서 분석하지 않는다.
+전체 코드베이스를 분석하지 않는다.
 
 ---
 
-## 3. 구현 계획 작성
+## 4. 작업 계획 작성
 
-구현 전에 짧게 계획을 작성한다.
-
-최대 5개 항목으로 제한한다.
+구현 전에 최대 5개 항목으로 짧게 작성한다.
 
 예:
 
 1. 관련 schema 확인
-2. 필요한 query 함수 추가
+2. 필요한 query 또는 RPC 추가
 3. 타입 정의
 4. 최소 검증
 5. 완료 조건 확인
 
-장황한 분석은 하지 않는다.
-
 ---
 
-## 4. Agent 사용
+## 5. Agent 사용
 
-필요한 Agent만 사용한다.
+단순하고 명확한 작업은 직접 수행한다. 전문적인 분석이나 검토가 실질적으로 도움이 되는 경우에만 아래 기준에 따라 Agent를 선택한다.
 
 우선순위:
 
@@ -109,9 +118,9 @@ Task에 명시된 관련 문서만 추가로 읽는다.
 
 ---
 
-## 5. 구현
+## 6. 구현
 
-Task 완료에 필요한 코드만 수정한다.
+요청을 완료하기 위해 필요한 코드만 수정한다.
 
 원칙:
 
@@ -123,9 +132,9 @@ Task 완료에 필요한 코드만 수정한다.
 
 ---
 
-## 6. 검증
+## 7. 검증
 
-Task에 필요한 범위만 검증한다.
+요청에 필요한 범위만 검증한다.
 
 기본 확인:
 
@@ -135,57 +144,48 @@ Task에 필요한 범위만 검증한다.
 
 DB 작업의 경우:
 
-- 테이블 생성 여부
-- FK / Constraint
-- INSERT / SELECT 가능 여부
+- 테이블 / 컬럼 생성 여부
+- FK / Constraint 동작
+- INSERT / SELECT / UPDATE 가능 여부
 - RLS 정책 동작
 
-매 Task마다 전체 E2E는 실행하지 않는다.
+전체 E2E는 필요한 경우에만 수행한다.
 
 ---
 
-## 7. 실패 처리
+## 8. 실패 처리
 
-테스트 또는 검증이 실패하면:
+검증이 실패하면:
 
 1. 원인을 확인한다.
 2. 필요한 경우 `debugger`를 호출한다.
 3. 최소 수정으로 해결한다.
-4. 해당 검증만 다시 수행한다.
+4. 해당 부분만 재검증한다.
 
 ---
 
-## 8. 완료 처리
+## 9. 완료
 
-Task의 완료 조건을 모두 확인한 뒤에만 완료 처리한다.
+요청의 완료 조건을 모두 확인하고 대화에서 결과를 보고한다.
 
-완료 시 `docs/8-PLAN.md`의 해당 체크박스를 업데이트한다.
-
-다음 Task로 자동 진행하지 않는다.
+자동으로 다음 작업을 실행하지 않는다.
 
 ---
 
 # 응답 형식
 
-작업 완료 후 아래 형식으로만 간결하게 보고한다.
+작업 완료 후 다음 형식으로 간결하게 보고한다.
 
 ```text
-TASK ${TASK_NUMBER} 완료
-
 변경:
 - ...
 - ...
 
 검증:
-- TypeScript PASS
-- lint PASS
-- 관련 기능 PASS
+- [실제로 수행한 검증]
 
 남은 문제:
 - 없음
-
-다음 Task:
-TASK XX
 ```
 
 변경하지 않은 코드나 문서를 다시 출력하지 않는다.
@@ -194,45 +194,33 @@ TASK XX
 
 # 절대 규칙
 
-- 전체 docs를 매번 읽지 않는다.
+- 전체 docs를 매번 읽지 않는다. CLAUDE.md의 Source of Truth Map을 기준으로 필요한 것만 읽는다.
 - 전체 코드베이스를 매번 분석하지 않는다.
 - 필요 없는 Agent를 호출하지 않는다.
-- 사용자가 요청하지 않은 다음 Task를 실행하지 않는다.
-- MVP 범위를 넘는 기능을 추가하지 않는다.
+- 사용자가 요청하지 않은 추가 작업을 실행하지 않는다.
+- 사용자가 요청하지 않은 기능을 임의로 추가하지 않는다.
 - 별도 백엔드 서버를 만들지 않는다.
-  Task 수행에 꼭 필요한 산출물 외 추가 문서 생성 금지
+- 요청 완료에 꼭 필요한 산출물 외 추가 문서를 생성하지 않는다.
+- CLAUDE.md의 Database & Security Rules를 따른다.
+
+---
 
 # Supabase 실제 적용 원칙
 
-DB, RLS, RPC, migration 관련 Task는
-SQL 파일을 생성하는 것만으로 완료 처리하지 않는다.
+DB, RLS, RPC, migration 관련 작업은
+repository의 migration과 실제 Supabase DB 상태가 분리되지 않도록 관리한다.
 
-반드시 다음 순서를 따른다.
+1. 현재 repository migration과 실제 Supabase 상태를 확인한다.
+2. 필요한 migration을 작성한다.
+3. Production DB 적용이 필요한 경우 변경 내용과 영향을 사용자에게 설명한다.
+4. 사용자의 명시적인 승인을 받은 경우에만 Supabase MCP를 통해 Production DB에 적용한다.
+5. 적용 후 실제 DB 상태를 검증한다.
 
-1. 해당 Task의 선행조건이 실제 Supabase 프로젝트에 반영되어 있는지 확인한다.
-2. 필요한 migration SQL을 작성한다.
-3. Supabase MCP를 사용해 실제 Supabase DB에 migration을 적용한다.
-4. 적용 후 실제 DB 상태를 확인한다.
-5. 다음 항목을 검증한다.
-   - Table 존재 여부
-   - Column 존재 여부
-   - Primary Key / Foreign Key / Unique Constraint
-   - RLS 활성화 여부
-   - Policy 존재 여부
-   - RPC / Function 존재 여부
-6. 적용 중 오류가 발생하면 원인을 분석한다.
-7. 필요한 코드 또는 migration을 수정한다.
-8. 수정된 migration을 다시 적용한다.
-9. 실제 Supabase 반영과 검증이 완료된 후에만 Task를 완료 처리한다.
+사용자의 승인 없이 Production DB를 변경하지 않는다.
 
-사용자에게 Supabase SQL Editor에서 직접 SQL을 복사·실행하도록 요청하지 않는다.
+Supabase MCP를 사용할 수 없거나 실제 적용이 승인되지 않은 경우,
+migration 작성 및 가능한 범위의 검증까지만 수행하고
+Production 미적용 상태임을 명확하게 보고한다.
 
-Supabase MCP가 사용 불가능한 경우에는
-Task를 완료 처리하지 않고 사용자에게 연결 문제만 보고한다.
-
-Task의 완료 조건을 코드상으로만 확인하지 않는다.
-
-DB 관련 Task의 경우
-실제 Supabase 프로젝트에 반영된 결과를 확인한 뒤에만 완료 처리한다.
-
-migration 파일 생성만으로는 완료가 아니다.
+Production에 적용되지 않은 변경을
+"Production 적용 완료"로 보고하지 않는다.

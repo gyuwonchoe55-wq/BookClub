@@ -21,50 +21,62 @@ Row-Level Security enables fine-grained access control at the database level. In
 ## Architecture & Data Flow
 
 ```
-User Browser (localStorage: memberId)
+User Browser
     ↓
-Next.js API Route (role verification)
+signInAnonymously()
     ↓
-Supabase Client (authenticated or publishable key)
+Supabase Anonymous Auth
+    ↓
+authenticated user (auth.uid())
+    ↓
+Next.js Client (Supabase Client with auth token)
+    ↓
+SECURITY DEFINER RPC or Direct Query
     ↓
 RLS Policies (data access control)
     ↓
 PostgreSQL Database
 ```
 
----
-
-## Current State (MVP - Before TASK 04)
-
-### Authentication
-- No formal Supabase auth yet
-- Users identified by `memberId` in browser localStorage
-- API routes verify user ownership of member records
-
-### RLS Access
-- **Read operations**: Use publishable key (anon access) - allowed for all
-- **Write operations**: Would need authenticated access (not yet available)
-- Policies prepared for authenticated access (TASK 04 prerequisite)
-
-### MVP Limitations
-- RLS policies have temporary `_anon_mvp` policies for read access
-- Write operations must validate ownership at API level
-- No true user authentication yet
+**Key Points:**
+- `signInAnonymously()` creates a Supabase authenticated user with `auth.uid()`
+- `auth.uid()` is mapped to `member.user_id` for membership identification
+- SECURITY DEFINER RPC functions handle sensitive operations with built-in authorization
+- RLS policies use `auth.uid()` and helper functions for access control
+- Note: Supabase `anon` role and Anonymous Sign-In `authenticated` user are different concepts
 
 ---
 
-## Post-TASK 04 (With Authentication)
+## Current Authentication & RLS Implementation
 
-### Authentication Setup
-1. Supabase auth configured with custom sign-up flow
-2. `user_id` column added to `member` table (already in migration)
-3. Each member record links to a Supabase auth user: `member.user_id = auth.users.id`
+### Anonymous Sign-In Flow
+1. User initializes session with `signInAnonymously()`
+2. Supabase creates authenticated user with unique `auth.uid()`
+3. `auth.uid()` is stored in `member.user_id` when user joins a book club
+4. Each data query uses authenticated Supabase client
 
-### RLS Enforcement
-- Supabase client authenticated with user token
-- `auth.uid()` returns current user's UUID in policies
-- RLS policies enforce user ownership automatically
-- Temporary anonymous policies removed
+### User Identification
+- **Primary identifier**: `auth.uid()` (Supabase unique user ID)
+- **Book club membership link**: `member.user_id = auth.uid()`
+- Book club membership is verified through member table lookup
+- No registration or login required (anonymous auth)
+
+### Table Privileges & RLS Enforcement
+
+**Current Table Privileges** (authenticated role):
+| Table | SELECT | INSERT | UPDATE | DELETE |
+|-------|--------|--------|--------|--------|
+| book_club | ✓ | | | |
+| member | ✓ | ✓ | | |
+| meeting | ✓ | | | |
+| reading_record | ✓ | ✓ | ✓ | |
+| session | ✓ | | | |
+
+- All tables have RLS enabled
+- Data modifications (insert/update) require both table privilege AND RLS policy pass
+- Sensitive operations (create book club, join club, start meeting) handled by SECURITY DEFINER RPC
+- RPC functions include built-in authorization checks before modifying data
+- SELECT operations available through both direct queries (RLS-filtered) and RPC functions
 
 ---
 
@@ -73,25 +85,32 @@ PostgreSQL Database
 ### 1. book_club
 
 **Access Pattern:**
-- View any book club (need to see details before joining)
-- No write operations via RLS (API creates clubs)
+- Members view only book clubs they belong to
+- No direct INSERT/UPDATE operations via RLS
+- Book club creation handled by RPC function `create_book_club_with_host`
 
 **Policies:**
 
 | Operation | Access | Condition |
 |-----------|--------|-----------|
-| SELECT | Allowed | Any authenticated/anon user (MVP) |
-| INSERT | Denied | No policy exists |
+| SELECT | Allowed | User is member of this book_club |
+| INSERT | Denied | No policy exists (use RPC) |
 | UPDATE | Denied | No policy exists |
 | DELETE | Denied | Referential integrity + no policy |
 
-**Security Rationale:**
-- Book clubs are semi-public (shared via invite link)
-- Visibility doesn't need privacy restriction for MVP
-- Creation/modification handled at API level with host authorization
+**Access Control Logic:**
+```sql
+-- SELECT: User sees only book clubs they're a member of
+book_club_id IN (
+  SELECT book_club_id FROM member WHERE user_id = auth.uid()
+)
+```
 
-**Future Enhancement:**
-- After TASK 04, consider private book clubs requiring membership to view
+**Security Rationale:**
+- Access verified through membership check using `is_book_club_member()` helper
+- Helper function uses `auth.uid()` to identify current user
+- Book club creation requires RPC with authorization
+- Supports invit-based access model (share invite code, user joins via RPC)
 
 ---
 
@@ -99,7 +118,7 @@ PostgreSQL Database
 
 **Access Pattern:**
 - View members of book clubs you're in (see participants)
-- Join a book club (create own member record)
+- Join a book club via `join_book_club` RPC (creates own member record)
 - Cannot modify or delete membership
 
 **Policies:**
@@ -107,7 +126,7 @@ PostgreSQL Database
 | Operation | Access | Condition |
 |-----------|--------|-----------|
 | SELECT | Allowed | User is member of same book_club |
-| INSERT | Allowed | Can only create own record (user_id = auth.uid()) |
+| INSERT | Allowed | Can only create own record (user_id = auth.uid(), is_host=false) |
 | UPDATE | Denied | No policy exists |
 | DELETE | Denied | Referential integrity + no policy |
 
@@ -115,24 +134,24 @@ PostgreSQL Database
 
 ```sql
 -- SELECT: User sees members of book clubs they're in
-member_id IN (
-  SELECT id FROM member WHERE user_id = auth.uid()
-)
+is_book_club_member(book_club_id)
 
 -- INSERT: User can only create own member record
-user_id = auth.uid() AND is_host = false
+(user_id = auth.uid()) AND (is_host = false)
 ```
+
+**How Users Join:**
+- Application calls `join_book_club(invite_code, nickname)` RPC
+- RPC validates invite code and checks not already member
+- RPC creates member record with user_id = auth.uid(), is_host = false
+- RLS INSERT policy enforces is_host = false as additional safeguard
 
 **Security Rationale:**
 - Users need to see participants for meeting discussions
-- Users can only join once per book club (UNIQUE constraint)
-- Cannot set `is_host=true` (default false, API verification needed)
+- Users can only join once per book club (UNIQUE constraint on user_id + book_club_id)
+- `is_host=false` enforced both at RPC level and RLS policy level
+- Host promotion/demotion only through backend (no direct table access)
 - Member deletion prevented to maintain participant history
-
-**Privilege Escalation Prevention:**
-- RLS enforces `is_host = false` on INSERT
-- Host promotion/demotion handled at API level
-- API must verify requester is current host
 
 ---
 
@@ -140,35 +159,41 @@ user_id = auth.uid() AND is_host = false
 
 **Access Pattern:**
 - View meetings in book clubs you're a member of
-- Create meetings (host only, API level)
-- Cannot modify or delete meetings
+- Create meetings via `create_meeting` RPC (host only)
+- Start meetings via `start_meeting` RPC (host only, creates session)
+- Cannot modify or delete meetings directly
 
 **Policies:**
 
 | Operation | Access | Condition |
 |-----------|--------|-----------|
 | SELECT | Allowed | User is member of meeting's book_club |
-| INSERT | Denied | No policy exists (API-only) |
-| UPDATE | Denied | No policy exists (API-only) |
+| INSERT | Denied | No policy exists (use RPC) |
+| UPDATE | Denied | No policy exists (use RPC) |
 | DELETE | Denied | Referential integrity + no policy |
 
 **Access Control Logic:**
 
 ```sql
 -- SELECT: User sees meetings of clubs they belong to
-meeting.book_club_id IN (
-  SELECT book_club_id FROM member WHERE user_id = auth.uid()
-)
+is_book_club_member(book_club_id)
 ```
 
-**Business Rules Enforced by RLS:**
-- Users cannot see meetings from book clubs they don't belong to
-- Status changes prevented via RLS (must go through API)
-- Cannot modify meeting schedule without authorization
+**How Meetings Are Created/Started:**
+- Host calls `create_meeting(book_club_id, book_title, meeting_date)` RPC
+  - RPC checks `is_book_club_host()` before creating
+  - Creates meeting with status='scheduled'
+  
+- Host calls `start_meeting(meeting_id)` RPC
+  - RPC checks `is_book_club_host()` before starting
+  - Updates meeting status to 'in_progress'
+  - Creates session with current_step='icebreaker'
 
-**API-Level Checks Required:**
-- Host verification: Only host can create/modify meetings
-- Status transitions: Only host can start or complete meetings
+**Security Rationale:**
+- Meetings visible only to book club members
+- Meeting creation/status changes require host authorization checked in RPC
+- Status transitions controlled via RPC, not direct table updates
+- Prevents unauthorized meeting creation or schedule changes
 
 ---
 
@@ -177,16 +202,16 @@ meeting.book_club_id IN (
 **Access Pattern:**
 - View all reading notes from book clubs you're in
 - Create your own reading record for a meeting
-- Edit your own record only before meeting starts
-- Cannot delete records
+- Edit your own record only before meeting starts (status='scheduled')
+- Cannot delete records (audit trail maintained)
 
 **Policies:**
 
 | Operation | Access | Condition |
 |-----------|--------|-----------|
 | SELECT | Allowed | User is member of record's meeting's book_club |
-| INSERT | Allowed | Only create own record (member_id = current user's member record) |
-| UPDATE | Allowed | Own record AND meeting status != 'in_progress' |
+| INSERT | Allowed | User creates own record for own member + same book_club |
+| UPDATE | Allowed | Own record AND meeting status = 'scheduled' |
 | DELETE | Denied | No policy exists |
 
 **Access Control Logic:**
@@ -195,47 +220,46 @@ meeting.book_club_id IN (
 -- SELECT: User sees records from meetings they participate in
 meeting_id IN (
   SELECT m.id FROM meeting m
-  WHERE m.book_club_id IN (
-    SELECT book_club_id FROM member WHERE user_id = auth.uid()
-  )
+  WHERE is_book_club_member(m.book_club_id)
 )
 
--- INSERT: User can only create record for themselves
-member_id IN (
-  SELECT id FROM member WHERE user_id = auth.uid()
-)
+-- INSERT: User can only create record for themselves in their book club
+(member_id IN (SELECT id FROM member WHERE user_id = auth.uid()))
+AND is_member_of_meeting(member_id, meeting_id)
 
--- UPDATE: Own record + meeting not started
+-- UPDATE: Own record + meeting must be scheduled
 member_id IN (SELECT id FROM member WHERE user_id = auth.uid())
-AND meeting_id IN (SELECT id FROM meeting WHERE status != 'in_progress')
+AND is_member_of_meeting(member_id, meeting_id)
+AND meeting_id IN (SELECT id FROM meeting WHERE status = 'scheduled')
 ```
+
+**Helper Functions Used:**
+- `is_member_of_meeting()`: Verifies member and meeting belong to same book_club
+- Avoids RLS recursion by using SECURITY DEFINER
 
 **Business Rules Enforced:**
 - One record per member per meeting (UNIQUE constraint)
-- Records locked once meeting starts (status='in_progress')
-- Users cannot edit other members' notes
-- Complete audit trail maintained (no deletions)
-
-**Feature Spec Implementation:**
-- F05: Reading record creation/modification control
-- Reading records usable as meeting discussion content
-- Pre-meeting editing, locked during meeting
+- Records locked when meeting starts (status='in_progress')
+- Users cannot modify other members' notes
+- Complete audit trail maintained (no deletions, only create/update)
+- Records become read-only once meeting begins
 
 ---
 
 ### 5. session
 
 **Access Pattern:**
-- View real-time meeting progress (current step, timing)
-- Cannot create/modify sessions via RLS (host/API only)
+- View real-time meeting progress (current step, question index)
+- Cannot create/modify sessions directly via RLS
+- Session creation and progress updates via RPC functions only
 
 **Policies:**
 
 | Operation | Access | Condition |
 |-----------|--------|-----------|
 | SELECT | Allowed | User is member of session's meeting's book_club |
-| INSERT | Denied | No policy exists (API creates on meeting start) |
-| UPDATE | Denied | No policy exists (API updates during meeting) |
+| INSERT | Denied | No policy exists (use RPC) |
+| UPDATE | Denied | No policy exists (use RPC) |
 | DELETE | Denied | Referential integrity + no policy |
 
 **Access Control Logic:**
@@ -244,16 +268,27 @@ AND meeting_id IN (SELECT id FROM meeting WHERE status != 'in_progress')
 -- SELECT: User sees progress of meetings they participate in
 meeting_id IN (
   SELECT m.id FROM meeting m
-  WHERE m.book_club_id IN (
-    SELECT book_club_id FROM member WHERE user_id = auth.uid()
-  )
+  WHERE is_book_club_member(m.book_club_id)
 )
 ```
 
-**Why No Write Policies:**
-- Sessions created when host starts meeting (API-driven)
-- Progress updates only during active meeting (API-controlled)
-- Participants view-only (shouldn't modify progress)
+**How Sessions Are Managed:**
+- Host calls `start_meeting(meeting_id)` RPC
+  - Creates session with current_step='icebreaker'
+  - One session per meeting (UNIQUE constraint)
+  
+- Host calls `update_session_step(session_id, step)` RPC during meeting
+  - Verifies host authorization before updating
+  - Progresses through: icebreaker → discussion → takeaway → completed
+  
+- Host calls `advance_question(session_id)` RPC
+  - Increments current_question_index within a step
+
+**Why No Direct Write Access:**
+- Sessions only created/modified during active meeting
+- Host-only operations verified in RPC functions
+- Prevents unauthorized progress manipulation
+- Ensures step progression follows defined sequence
 
 ---
 
@@ -326,157 +361,139 @@ WHERE member_id = (
 
 ---
 
-## MVP Constraints & Assumptions
+## Current Implementation Notes
 
-### Current Limitations
+### Sensitive Operations via SECURITY DEFINER RPC
 
-1. **No User Identification in Database**
-   - `member.user_id` exists but not populated yet
-   - Can't verify user identity through RLS
-   - Workaround: API validates ownership using localStorage memberId
+The following operations bypass direct table access in favor of SECURITY DEFINER RPC functions:
 
-2. **Anonymous Read Access**
-   - Policies have `_anon_mvp` variants for publishable key
-   - Allow all read access without authentication
-   - MUST be removed after TASK 04
+1. **Book Club Creation**: `create_book_club_with_host()`
+   - Creates book_club, member (as host), and initial meeting atomically
+   - Verifies input data
+   - Links user via `auth.uid()` → `member.user_id`
 
-3. **API-Level Authorization**
-   - RLS can't verify host status (requires comparing member records)
-   - API must double-check authorization before write operations
-   - Example: Verify host before allowing meeting status change
+2. **Joining Book Club**: `join_book_club()`
+   - Validates invite code
+   - Checks user not already member
+   - Creates member record with `user_id = auth.uid()`
+   - Enforces `is_host = false`
 
-4. **Session Creation**
-   - Sessions created by API, not through INSERT policies
-   - No RLS policy protects session creation (API-only)
+3. **Meeting Management**:
+   - `create_meeting()`: Host-only, creates new meeting
+   - `start_meeting()`: Host-only, updates status to 'in_progress', creates session
+   - `update_session_step()`: Host-only, progresses meeting through stages
+   - `advance_question()`: Host-only, increments question index
 
-### After TASK 04 (Authentication Implementation)
+### Authorization Pattern
 
-1. **User Identification**
-   - Supabase auth integrated
-   - Each user has unique user_id
-   - member.user_id populated with auth user ID
+All SECURITY DEFINER RPC functions:
+1. Check user identity via `auth.uid()`
+2. Verify membership via `is_book_club_member()`
+3. Verify host status via `is_book_club_host()` where needed
+4. Perform operation with elevated privileges
+5. Return results or raise exception
 
-2. **Authenticated Access**
-   - All clients use authenticated Supabase tokens
-   - RLS policies use `auth.uid()` for user verification
-   - Anonymous `_anon_mvp` policies removed
-
-3. **True Host Verification**
-   - Can verify host through member table query
-   - API can use RLS to list only book clubs user can modify
-
-4. **Enhanced Policies**
-   - Consider host-only INSERT/UPDATE policies if needed
-   - Implement session creation/modification API policies
+This ensures sensitive operations cannot be bypassed through direct table access.
 
 ---
 
 ## Testing RLS Policies
 
-### Pre-TASK 04 Testing (Anonymous Access)
+### Authenticated Access Testing
 
-```typescript
-// 1. Test read access works without auth
-const { data: bookClubs } = await supabase
-  .from('book_club')
-  .select()
-  .limit(1);
-// Should return data (anon read allowed)
-
-// 2. Test write requires API (not direct DB)
-const { error } = await supabase
-  .from('member')
-  .insert({ book_club_id: clubId, nickname: 'Test' });
-// Should fail (no auth, RLS denies)
-
-// 3. Test API handles writes correctly
-const response = await fetch('/api/join-club', {
-  method: 'POST',
-  body: JSON.stringify({ clubId, nickname })
-});
-// Should succeed (API validates, creates member record)
-```
-
-### Post-TASK 04 Testing (Authenticated Access)
+All users access BookClub through anonymous Supabase authentication. Tests verify RLS enforcement:
 
 ```typescript
 // 1. Test authenticated read access
-const { data: { session } } = await supabase.auth.getSession();
-const client = supabase.setAuth(session.access_token);
+// User signed in with signInAnonymously(), client uses auth token
+const { data: bookClubs } = await supabase
+  .from('book_club')
+  .select();
+// Should only return book clubs user is a member of
 
-const { data: meetings } = await client
+const { data: meetings } = await supabase
   .from('meeting')
   .select();
 // Should only return meetings from user's book clubs
 
-// 2. Test ownership enforcement
-const { data: others } = await client
+// 2. Test membership isolation
+const { data: members } = await supabase
+  .from('member')
+  .select()
+  .eq('book_club_id', club_a_id);
+// Works: User is member of club_a
+
+const { data: other_members } = await supabase
+  .from('member')
+  .select()
+  .eq('book_club_id', club_b_id);
+// Returns empty: User is not member of club_b
+
+// 3. Test reading record access
+const { data: own_records } = await supabase
   .from('reading_record')
   .select()
-  .eq('member_id', 'different_member_id');
-// Should return empty (RLS denies)
+  .eq('member_id', user_member_id);
+// Works: User's own records from clubs they're in
 
-// 3. Test business rule enforcement
-const { error } = await client
+const { data: others } = await supabase
+  .from('reading_record')
+  .select()
+  .eq('member_id', 'other_user_member_id');
+// Returns empty: RLS denies access to other users' records
+
+// 4. Test record modification constraints
+const { error } = await supabase
   .from('reading_record')
   .update({ memorable_quote: 'New quote' })
-  .eq('id', recordId)
-  .eq('meeting.status', 'in_progress');
-// Should fail (meeting started, RLS denies)
-
-// 4. Test cross-club isolation
-const { data: crossClub } = await client
-  .from('reading_record')
-  .select()
-  .in('meeting_id', [other_club_meeting_ids]);
-// Should return empty (not a member of that club)
+  .eq('id', recordId);
+// Succeeds if: user owns record AND meeting.status = 'scheduled'
+// Fails if: meeting has started (status != 'scheduled')
 ```
 
 ### Security Test Scenarios
 
-| Scenario | Expected Behavior | Test Method |
-|----------|------------------|------------|
-| User views book club they don't belong to | See basic info (MVP) | SELECT book_club (should work) |
-| User views members of club they're in | See all members | SELECT member WHERE book_club_id = own_club |
-| User views members of club they're NOT in | Should fail | SELECT member WHERE book_club_id = other_club |
-| User edits own reading record before meeting | Should succeed | UPDATE own reading_record (meeting.status = scheduled) |
-| User edits own reading record after meeting starts | Should fail | UPDATE own reading_record (meeting.status = in_progress) |
-| User tries to edit another's reading record | Should fail | UPDATE reading_record (member_id ≠ own) |
-| Non-host tries to start meeting | API should deny | POST /api/start-meeting (API verifies host) |
-| User deletes reading record | Should fail | DELETE reading_record (no policy exists) |
+| Scenario | Expected Behavior | Why |
+|----------|------------------|-----|
+| User views book club they're member of | See book club details | RLS: is_book_club_member() check passes |
+| User views book club they're NOT member of | No data returned | RLS: is_book_club_member() check fails |
+| User views members of their book club | See all members | RLS: is_book_club_member() check passes |
+| User views members of other book club | No data returned | RLS: is_book_club_member() check fails |
+| User views own reading records | See own records | RLS: member_id IN (own member IDs) |
+| User views other's reading records | No data returned | RLS: is_book_club_member() on meeting check |
+| User edits own record (meeting scheduled) | Update succeeds | RLS: ownership + status='scheduled' both pass |
+| User edits own record (meeting started) | Update fails | RLS: status != 'scheduled' check fails |
+| User tries to edit another's record | Update fails | RLS: member_id ownership check fails |
+| Non-host calls start_meeting RPC | RPC fails | SECURITY DEFINER: is_book_club_host() check fails |
+| User tries to delete record | Delete fails | RLS: No DELETE policy exists on any table |
+| Non-authenticated user accesses tables | All fail | table privilege: authenticated role only |
 
 ---
 
-## Implementation Checklist
+## Current Implementation Status
 
-### Before TASK 04 (Current - MVP Bootstrap)
+### Deployed & Active
 
-- [x] RLS migration file created with full policies
-- [ ] Deploy RLS migration to Supabase
-- [ ] Verify anonymous read access works
-- [ ] Verify API-level writes work correctly
-- [ ] Test user isolation (different members see different data)
-- [ ] Test ownership enforcement at API level
-- [ ] Document API authorization logic
+- [x] RLS enabled on all core tables
+- [x] RLS migration deployed to Supabase Production
+- [x] Anonymous sign-in (`signInAnonymously()`) implemented
+- [x] `member.user_id` populated with `auth.uid()` on user join
+- [x] All SECURITY DEFINER RPC functions implemented and active
+- [x] User isolation enforced via RLS policies
+- [x] Reading record ownership enforced via RLS
+- [x] Meeting status transitions via RPC (host-only)
+- [x] Session management via RPC (host-only)
 
-### During TASK 04 (Authentication)
+### Verified & Tested
 
-- [ ] Add Supabase auth to application
-- [ ] Populate member.user_id for existing members
-- [ ] Test authenticated access replaces anonymous
-- [ ] Verify auth.uid() works in RLS policies
-- [ ] Remove all `_anon_mvp` policies
-- [ ] Test user isolation via RLS (not just API)
-- [ ] Test cross-user data isolation
-
-### Post-TASK 04 (Verification)
-
-- [ ] Verify no anonymous access possible
-- [ ] Monitor RLS policy performance
-- [ ] Test edge cases (concurrent edits, race conditions)
-- [ ] Document any custom auth claims
-- [ ] Plan soft-delete implementation if needed
-- [ ] Consider additional policies for future features
+- [x] Authenticated user access (via `auth.uid()`)
+- [x] Cross-book-club data isolation
+- [x] Reading record update restrictions (status='scheduled' only)
+- [x] Host authorization on sensitive operations
+- [x] Member deletion prevention (referential integrity)
+- [x] Member unique constraint (one per user per book club)
+- [x] RLS policy application on direct queries
+- [x] RLS policy application on RPC functions
 
 ---
 
@@ -640,13 +657,14 @@ When RLS denies access, Supabase returns:
 
 ### Common Scenarios
 
-| Error | Cause | User Action |
-|-------|-------|------------|
-| RLS denies INSERT on member | User not authenticated | Login (TASK 04) |
-| RLS denies INSERT on member | is_host=true | API won't send (enforced) |
-| RLS denies UPDATE on reading_record | Meeting started | Can't edit (by design) |
-| RLS denies SELECT from meeting | Not book club member | Join club first |
-| RLS denies DELETE | No policy exists | Deletion not supported |
+| Error | Cause | Resolution |
+|-------|-------|-----------|
+| RLS denies INSERT on member | User not authenticated | signInAnonymously() required first |
+| RLS denies INSERT on member | is_host=true attempted | Use RPC (RLS enforces is_host=false) |
+| RLS denies UPDATE on reading_record | Meeting in_progress or completed | Can only edit when status='scheduled' |
+| RLS denies SELECT from meeting | Not book club member | Join club via join_book_club() RPC |
+| RLS denies DELETE | No policy exists | Deletions blocked by design (audit trail) |
+| RPC call fails | User not host | Verify is_host=true in member table |
 
 ### API Error Response Pattern
 
@@ -728,28 +746,34 @@ If data mistakenly modified:
 
 ---
 
-## Next Steps
+## Future Enhancements
 
-### Immediate (Sprint Next)
+The current RLS implementation provides a solid security foundation. Future improvements may include:
 
-1. Deploy RLS migration to Supabase staging
-2. Test anonymous read access in app
-3. Verify API writes work correctly
-4. Document API authorization requirements
+1. **Soft Delete Pattern**
+   - Add `deleted_at` column to tables
+   - RLS policies filter soft-deleted records
+   - Maintains audit trail while hiding deleted data
 
-### TASK 04 (Authentication Implementation)
+2. **Audit Logging**
+   - Dedicated audit_log table
+   - Tracks INSERT, UPDATE operations
+   - Timestamps and user identification
 
-1. Implement Supabase auth
-2. Populate member.user_id
-3. Remove `_anon_mvp` policies
-4. Verify authenticated access via RLS
+3. **Performance Optimization**
+   - Monitor RLS policy execution time
+   - Add indexes if queries degrade
+   - Profile complex subqueries in policies
 
-### Future Enhancements
+4. **Access Control Enhancements**
+   - Host-only RLS policies (if needed)
+   - Role-based access beyond host/member
+   - Time-based access restrictions
 
-1. Implement soft delete pattern
-2. Add audit logging for compliance
-3. Consider host-only RLS policies
-4. Performance monitoring & optimization
+5. **Recovery & Compliance**
+   - Point-in-time restore capability
+   - Compliance audit reports
+   - Data retention policies
 5. Custom claims for role-based access
 
 ---
