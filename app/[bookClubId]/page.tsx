@@ -5,10 +5,10 @@ import { useRouter } from "next/navigation";
 import { Layout, Button } from "@/components";
 import { useAuth } from "@/hooks/useAuth";
 import { getBookClub } from "@/lib/book-clubs";
-import { getCurrentMeeting, getBookClubMeetings } from "@/lib/meetings";
+import { getBookClubMeetings, getActiveOrCurrentMeeting } from "@/lib/meetings";
 import { getBookClubMembers } from "@/lib/members";
 import { getMeetingReadingRecords } from "@/lib/reading-records";
-import { startMeeting } from "@/lib/sessions";
+import { startMeeting, getSession } from "@/lib/sessions";
 
 interface MemberWithRecord {
   id: string;
@@ -73,7 +73,6 @@ export default function BookClubPage({
     setIsStartingMeeting(true);
     try {
       const sessionId = await startMeeting(data.currentMeeting.id);
-      // Navigate to STEP 1 with session ID
       router.push(
         `/${bookClubId}/session/step1?sessionId=${sessionId}`
       );
@@ -87,6 +86,59 @@ export default function BookClubPage({
     }
   };
 
+  const handleResumeMeeting = async () => {
+    if (!data?.currentMeeting) return;
+
+    setIsStartingMeeting(true);
+    try {
+      const session = await getSession(data.currentMeeting.id);
+      if (!session) {
+        setError("진행 중인 모임을 찾을 수 없습니다.");
+        setIsStartingMeeting(false);
+        return;
+      }
+
+      let stepPath = "step1";
+      switch (session.currentStep) {
+        case "intro":
+          stepPath = "step1";
+          break;
+        case "memorable_quote":
+          stepPath = "step2";
+          break;
+        case "discussion":
+          stepPath = "step3";
+          break;
+        case "takeaway":
+          stepPath = "step4";
+          break;
+        case "completed":
+          // 종료 처리 중 실패한 경우 마무리 화면에서 다시 종료할 수 있도록 step4로 보낸다
+          stepPath = "step4";
+          break;
+        case "icebreaker":
+          // Fallback for existing sessions before migration
+          stepPath = "step1";
+          break;
+        default:
+          setError("알 수 없는 진행 단계입니다.");
+          setIsStartingMeeting(false);
+          return;
+      }
+
+      router.push(
+        `/${bookClubId}/session/${stepPath}?sessionId=${session.id}`
+      );
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "모임을 이어가는데 실패했습니다."
+      );
+      setIsStartingMeeting(false);
+    }
+  };
+
   useEffect(() => {
     if (isAuthLoading) return;
 
@@ -95,7 +147,7 @@ export default function BookClubPage({
         const [bookClub, currentMeeting, members, allMeetings] =
           await Promise.all([
             getBookClub(bookClubId),
-            getCurrentMeeting(bookClubId),
+            getActiveOrCurrentMeeting(bookClubId),
             getBookClubMembers(bookClubId),
             getBookClubMeetings(bookClubId),
           ]);
@@ -141,9 +193,9 @@ export default function BookClubPage({
           };
         });
 
-        // Get past meetings (all except current)
+        // Get past meetings (completed only; scheduled/in_progress belong to the current area)
         const pastMeetings = allMeetings
-          .filter((m) => m.status !== "scheduled")
+          .filter((m) => m.status === "completed")
           .slice(0, 5)
           .map((m) => ({
             id: m.id,
@@ -340,28 +392,41 @@ export default function BookClubPage({
           </div>
         )}
 
-        {/* Start Meeting Button (Host Only) */}
+        {/* Start/Resume Meeting Button (Host Only) */}
         {data.isCurrentUserHost && data.currentMeeting && (
           <div className="border-t border-gray-300 pt-8">
-            <Button
-              variant="primary"
-              onClick={handleStartMeeting}
-              disabled={
-                !data.currentUserMember?.hasRecord ||
-                data.members.some((m) => !m.hasRecord) ||
-                data.currentMeeting.status !== "scheduled" ||
-                isStartingMeeting
-              }
-              className="w-full"
-            >
-              {isStartingMeeting ? "모임 시작 중..." : "모임 시작하기"}
-            </Button>
-            {data.currentMeeting.status !== "scheduled" && (
+            {data.currentMeeting.status === "scheduled" && (
+              <Button
+                variant="primary"
+                onClick={handleStartMeeting}
+                disabled={
+                  !data.currentUserMember?.hasRecord ||
+                  data.members.some((m) => !m.hasRecord) ||
+                  isStartingMeeting
+                }
+                className="w-full"
+              >
+                {isStartingMeeting ? "모임 시작 중..." : "모임 시작하기"}
+              </Button>
+            )}
+            {data.currentMeeting.status === "in_progress" && (
+              <Button
+                variant="primary"
+                onClick={handleResumeMeeting}
+                disabled={isStartingMeeting}
+                className="w-full"
+              >
+                {isStartingMeeting ? "모임 이어가는 중..." : "모임 이어서 진행하기"}
+              </Button>
+            )}
+            {data.currentMeeting.status === "completed" && (
               <p className="text-xs text-gray-600 mt-2">
-                이미 진행된 또는 완료된 모임입니다.
+                이미 완료된 모임입니다.
               </p>
             )}
-            {data.currentUserMember && !data.currentUserMember.hasRecord && (
+            {data.currentMeeting.status === "scheduled" &&
+              data.currentUserMember &&
+              !data.currentUserMember.hasRecord && (
               <p className="text-xs text-gray-600 mt-2">
                 먼저 자신의 독서 기록을 작성해주세요.
               </p>

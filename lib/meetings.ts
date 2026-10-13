@@ -39,6 +39,23 @@ export async function createMeeting(
 }
 
 /**
+ * End a meeting: sets meeting.status='completed' and session.ended_at
+ * Only the host can end meetings
+ * Uses RPC function to ensure authorization
+ */
+export async function endMeeting(meetingId: string): Promise<void> {
+  const supabase = createClient();
+
+  const { error } = await supabase.rpc("end_meeting", {
+    p_meeting_id: meetingId,
+  });
+
+  if (error) {
+    throw new Error(`Failed to end meeting: ${error.message}`);
+  }
+}
+
+/**
  * Get all meetings for a book club, ordered by date descending
  */
 export async function getBookClubMeetings(
@@ -121,6 +138,42 @@ export async function getMeetingById(
       return null; // Not found
     }
     throw new Error(`Failed to fetch meeting: ${error.message}`);
+  }
+
+  return {
+    id: data.id,
+    bookClubId: data.book_club_id,
+    bookTitle: data.book_title,
+    meetingDate: data.meeting_date,
+    status: data.status,
+    createdAt: data.created_at,
+  };
+}
+
+/**
+ * Get the current or ongoing meeting (status='scheduled' or 'in_progress')
+ * Returns the most recent meeting with either status
+ * Used during and after meeting starts
+ */
+export async function getActiveOrCurrentMeeting(
+  bookClubId: string
+): Promise<Meeting | null> {
+  const supabase = createClient();
+
+  const { data, error } = await supabase
+    .from("meeting")
+    .select("id, book_club_id, book_title, meeting_date, status, created_at")
+    .eq("book_club_id", bookClubId)
+    .in("status", ["scheduled", "in_progress"])
+    .order("meeting_date", { ascending: false })
+    .limit(1)
+    .single();
+
+  if (error) {
+    if (error.code === "PGRST116") {
+      return null;
+    }
+    throw new Error(`Failed to fetch active or current meeting: ${error.message}`);
   }
 
   return {

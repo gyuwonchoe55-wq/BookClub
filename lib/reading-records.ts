@@ -5,7 +5,10 @@ export interface ReadingRecord {
   meetingId: string;
   memberId: string;
   memorableQuote?: string;
+  memorableQuotePage?: string;
   discussionQuestion?: string;
+  discussionPassage?: string;
+  discussionNote?: string;
   takeaway?: string;
   createdAt: string;
   updatedAt: string;
@@ -13,15 +16,24 @@ export interface ReadingRecord {
 
 interface CreateReadingRecordData {
   memorableQuote?: string;
+  memorableQuotePage?: string;
   discussionQuestion?: string;
+  discussionPassage?: string;
+  discussionNote?: string;
   takeaway?: string;
 }
 
 interface UpdateReadingRecordData {
   memorableQuote?: string;
+  memorableQuotePage?: string;
   discussionQuestion?: string;
+  discussionPassage?: string;
+  discussionNote?: string;
   takeaway?: string;
 }
+
+const RECORD_SELECT =
+  "id, meeting_id, member_id, memorable_quote, memorable_quote_page, discussion_question, discussion_passage, discussion_note, takeaway, created_at, updated_at";
 
 /**
  * Create a new reading record for a member in a meeting
@@ -39,7 +51,10 @@ export async function createReadingRecord(
       meeting_id: meetingId,
       member_id: memberId,
       memorable_quote: data.memorableQuote || null,
+      memorable_quote_page: data.memorableQuotePage || null,
       discussion_question: data.discussionQuestion || null,
+      discussion_passage: data.discussionPassage || null,
+      discussion_note: data.discussionNote || null,
       takeaway: data.takeaway || null,
     })
     .select("id")
@@ -69,8 +84,17 @@ export async function updateReadingRecord(
   if (data.memorableQuote !== undefined) {
     updatePayload.memorable_quote = data.memorableQuote || null;
   }
+  if (data.memorableQuotePage !== undefined) {
+    updatePayload.memorable_quote_page = data.memorableQuotePage || null;
+  }
   if (data.discussionQuestion !== undefined) {
     updatePayload.discussion_question = data.discussionQuestion || null;
+  }
+  if (data.discussionPassage !== undefined) {
+    updatePayload.discussion_passage = data.discussionPassage || null;
+  }
+  if (data.discussionNote !== undefined) {
+    updatePayload.discussion_note = data.discussionNote || null;
   }
   if (data.takeaway !== undefined) {
     updatePayload.takeaway = data.takeaway || null;
@@ -97,9 +121,7 @@ export async function getReadingRecord(
 
   const { data, error } = await supabase
     .from("reading_record")
-    .select(
-      "id, meeting_id, member_id, memorable_quote, discussion_question, takeaway, created_at, updated_at"
-    )
+    .select(RECORD_SELECT)
     .eq("meeting_id", meetingId)
     .eq("member_id", memberId)
     .single();
@@ -116,7 +138,10 @@ export async function getReadingRecord(
     meetingId: data.meeting_id,
     memberId: data.member_id,
     memorableQuote: data.memorable_quote,
+    memorableQuotePage: data.memorable_quote_page,
     discussionQuestion: data.discussion_question,
+    discussionPassage: data.discussion_passage,
+    discussionNote: data.discussion_note,
     takeaway: data.takeaway,
     createdAt: data.created_at,
     updatedAt: data.updated_at,
@@ -133,9 +158,7 @@ export async function getMeetingReadingRecords(
 
   const { data, error } = await supabase
     .from("reading_record")
-    .select(
-      "id, meeting_id, member_id, memorable_quote, discussion_question, takeaway, created_at, updated_at"
-    )
+    .select(RECORD_SELECT)
     .eq("meeting_id", meetingId)
     .order("created_at", { ascending: true });
 
@@ -148,7 +171,10 @@ export async function getMeetingReadingRecords(
     meetingId: r.meeting_id,
     memberId: r.member_id,
     memorableQuote: r.memorable_quote,
+    memorableQuotePage: r.memorable_quote_page,
     discussionQuestion: r.discussion_question,
+    discussionPassage: r.discussion_passage,
+    discussionNote: r.discussion_note,
     takeaway: r.takeaway,
     createdAt: r.created_at,
     updatedAt: r.updated_at,

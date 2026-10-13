@@ -3,7 +3,14 @@ import { createClient } from "@/utils/supabase/client";
 export interface Session {
   id: string;
   meetingId: string;
-  currentStep: "icebreaker" | "discussion" | "takeaway" | "completed";
+  // "icebreaker": legacy compatibility only (read side). Never written for new sessions.
+  currentStep:
+    | "icebreaker"
+    | "intro"
+    | "memorable_quote"
+    | "discussion"
+    | "takeaway"
+    | "completed";
   currentQuestionIndex: number;
   remainingSeconds?: number;
   startedAt: string;
@@ -42,15 +49,16 @@ export async function startMeeting(meetingId: string): Promise<string> {
  * Update session's current step to progress through meeting stages
  * Only the host can update session progress
  *
- * Stages: icebreaker → discussion → takeaway → completed
- * - icebreaker: Ice breaker with memorable quotes
+ * Stages: intro → memorable_quote → discussion → takeaway → completed
+ * - intro: Introduction stage (free discussion)
+ * - memorable_quote: Sharing memorable quotes
  * - discussion: Discussion with questions
- * - takeaway: Sharing takeaways/learnings
+ * - takeaway: Sharing takeaways/one-liners
  * - completed: Meeting finished
  */
 export async function updateSessionStep(
   sessionId: string,
-  step: "icebreaker" | "discussion" | "takeaway" | "completed"
+  step: "intro" | "memorable_quote" | "discussion" | "takeaway" | "completed"
 ): Promise<void> {
   const supabase = createClient();
 

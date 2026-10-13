@@ -6,6 +6,12 @@ import { Layout, Button } from "@/components";
 import { getSessionById, updateSessionStep } from "@/lib/sessions";
 import { getMeetingReadingRecords } from "@/lib/reading-records";
 import { getBookClubMembers } from "@/lib/members";
+import { getMeetingById } from "@/lib/meetings";
+
+interface Step {
+  label: string;
+  color: string;
+}
 
 interface Sentence {
   sentence: string;
@@ -18,11 +24,20 @@ interface PageState {
   error: string;
   sentences: Sentence[];
   currentIndex: number;
-  isAuthorRevealed: boolean;
   sessionId: string;
+  meetingId: string;
+  bookTitle: string;
+  isAdvancing: boolean;
 }
 
-export default function Step1Page({
+const STEPS: Record<string, Step> = {
+  intro: { label: "인트로", color: "bg-orange-400" },
+  step1: { label: "진행 1", color: "bg-green-500" },
+  step2: { label: "진행 2", color: "bg-red-300" },
+  step3: { label: "마무리", color: "bg-yellow-400" },
+};
+
+export default function IntroPage({
   params,
 }: {
   params: Promise<{ bookClubId: string }>;
@@ -37,11 +52,12 @@ export default function Step1Page({
     error: "",
     sentences: [],
     currentIndex: 0,
-    isAuthorRevealed: false,
     sessionId: sessionId || "",
+    meetingId: "",
+    bookTitle: "",
+    isAdvancing: false,
   });
 
-  // Load data
   useEffect(() => {
     const loadData = async () => {
       try {
@@ -49,38 +65,22 @@ export default function Step1Page({
           throw new Error("Session ID not provided");
         }
 
-        // Fetch session
         const session = await getSessionById(sessionId);
         if (!session) {
           throw new Error("Session not found");
         }
 
-        // Fetch meeting and reading records
-        const records = await getMeetingReadingRecords(session.meetingId);
-
-        // Fetch members
-        const members = await getBookClubMembers(bookClubId);
-        const memberMap = new Map(members.map((m) => [m.id, m.nickname]));
-
-        // Extract sentences from reading records
-        const sentences: Sentence[] = records
-          .filter((r) => r.memorableQuote)
-          .map((r) => ({
-            sentence: r.memorableQuote!,
-            memberId: r.memberId,
-            memberNickname: memberMap.get(r.memberId) || "알 수 없음",
-          }));
-
-        if (sentences.length === 0) {
-          throw new Error("No sentences found in reading records");
+        const meeting = await getMeetingById(session.meetingId);
+        if (!meeting) {
+          throw new Error("Meeting not found");
         }
 
         setState((prev) => ({
           ...prev,
           isLoading: false,
-          sentences,
-          currentIndex: session.currentQuestionIndex || 0,
-          isAuthorRevealed: false,
+          sessionId: session.id,
+          meetingId: session.meetingId,
+          bookTitle: meeting.bookTitle,
         }));
       } catch (err) {
         setState((prev) => ({
@@ -94,47 +94,21 @@ export default function Step1Page({
     loadData();
   }, [sessionId, bookClubId]);
 
-  const handleRevealAuthor = () => {
-    setState((prev) => ({
-      ...prev,
-      isAuthorRevealed: true,
-    }));
-  };
-
-  const handleNextSentence = () => {
-    const nextIndex = state.currentIndex + 1;
-
-    if (nextIndex >= state.sentences.length) {
-      // All sentences completed, move to STEP 2
-      handleMoveToStep2();
-    } else {
-      setState((prev) => ({
-        ...prev,
-        currentIndex: nextIndex,
-        isAuthorRevealed: false,
-      }));
-    }
-  };
-
-  const handleMoveToStep2 = async () => {
+  const handleMoveToStep1 = async () => {
     try {
       setState((prev) => ({
         ...prev,
-        isLoading: true,
+        isAdvancing: true,
       }));
 
-      await updateSessionStep(state.sessionId, "discussion");
+      await updateSessionStep(state.sessionId, "memorable_quote");
 
-      // Navigate to STEP 2
-      router.push(
-        `/${bookClubId}/session/step2?sessionId=${state.sessionId}`
-      );
+      router.push(`/${bookClubId}/session/step2?sessionId=${state.sessionId}`);
     } catch (err) {
       setState((prev) => ({
         ...prev,
-        isLoading: false,
-        error:
-          err instanceof Error ? err.message : "Failed to move to STEP 2",
+        isAdvancing: false,
+        error: err instanceof Error ? err.message : "Failed to move to next step",
       }));
     }
   };
@@ -142,8 +116,8 @@ export default function Step1Page({
   if (state.isLoading) {
     return (
       <Layout>
-        <div className="flex h-screen items-center justify-center">
-          <p className="text-gray-600">로딩 중...</p>
+        <div className="flex h-screen items-center justify-center bg-orange-400">
+          <p className="text-white">로딩 중...</p>
         </div>
       </Layout>
     );
@@ -169,110 +143,50 @@ export default function Step1Page({
     );
   }
 
-  if (state.sentences.length === 0) {
-    return (
-      <Layout>
-        <div className="flex h-screen flex-col items-center justify-center gap-4">
-          <p className="text-gray-600">진행할 문장이 없습니다.</p>
-          <Button
-            onClick={() => router.back()}
-            className="border border-black px-6 py-2"
-          >
-            돌아가기
-          </Button>
-        </div>
-      </Layout>
-    );
-  }
-
-  const currentSentence = state.sentences[state.currentIndex];
-  const isLastSentence = state.currentIndex === state.sentences.length - 1;
-  const progressText = `${state.currentIndex + 1}/${state.sentences.length}`;
-
   return (
-    <Layout>
-      <div className="flex min-h-screen flex-col">
-        {/* Header */}
-        <div className="mb-12">
-          <h1 className="text-3xl font-bold">STEP 1 · 아이스브레이킹</h1>
-        </div>
-
-        {/* Progress Bar */}
-        <div className="mb-12">
-          <div className="flex items-center gap-4">
-            <div className="flex-1">
-              <div className="border border-black">
-                <div
-                  className="border-r border-black bg-black"
-                  style={{
-                    height: "4px",
-                    width: `${((state.currentIndex + 1) / state.sentences.length) * 100}%`,
-                  }}
-                />
-              </div>
-            </div>
-            <span className="whitespace-nowrap text-sm text-gray-600">
-              {progressText}
-            </span>
+    <div className="bg-orange-400 min-h-screen flex flex-col">
+      {/* Top Navigation */}
+      <div className="border-b-4 border-black bg-orange-400 flex items-center">
+        <div className="flex-1 flex">
+          <div className="flex-1 bg-black text-white px-4 py-3 font-bold text-center">
+            인트로
+          </div>
+          <div className="flex-1 border-l-4 border-black px-4 py-3 font-bold text-center">
+            진행 1
+          </div>
+          <div className="flex-1 border-l-4 border-black px-4 py-3 font-bold text-center">
+            진행 2
+          </div>
+          <div className="flex-1 border-l-4 border-black px-4 py-3 font-bold text-center">
+            마무리
           </div>
         </div>
+        <div className="px-4 py-3 font-bold">끝내기</div>
+      </div>
 
-        {/* Main Content */}
-        <div className="flex flex-1 flex-col justify-center gap-12">
-          {/* Sentence Number */}
-          <div className="text-center">
-            <p className="text-sm text-gray-600">문장 {state.currentIndex + 1}</p>
-          </div>
-
-          {/* Current Sentence */}
-          <div className="text-center">
-            <p className="whitespace-pre-wrap text-2xl font-bold leading-relaxed">
-              &ldquo;{currentSentence.sentence}&rdquo;
-            </p>
-          </div>
-
-          {/* Author Section */}
-          <div className="space-y-4 text-center">
-            {!state.isAuthorRevealed ? (
-              <>
-                <p className="text-lg text-gray-600">누가 고른 문장일까요?</p>
-              </>
-            ) : (
-              <>
-                <p className="text-lg font-bold">
-                  정답은 {currentSentence.memberNickname}님!
-                </p>
-                <p className="text-gray-600">
-                  {currentSentence.memberNickname}님이 이 문장을 고른 이유를
-                  들어볼까요?
-                </p>
-              </>
-            )}
-          </div>
-        </div>
-
-        {/* Action Buttons */}
-        <div className="mt-12">
-          {!state.isAuthorRevealed ? (
-            <Button
-              variant="primary"
-              onClick={handleRevealAuthor}
-              className="w-full"
-            >
-              작성자 공개
-            </Button>
-          ) : (
-            <Button
-              variant="primary"
-              onClick={handleNextSentence}
-              disabled={state.isLoading}
-              className="w-full"
-            >
-              {isLastSentence ? "STEP 2로 이동" : "다음 문장"}
-            </Button>
-          )}
+      {/* Main Content */}
+      <div className="flex-1 flex flex-col items-center justify-center px-6">
+        <div className="text-center space-y-8">
+          <h2 className="text-4xl font-bold text-white">감상 공유</h2>
+          <p className="text-3xl font-bold text-black leading-relaxed">
+            {state.bookTitle}
+            <br />
+            어떻게 읽었나요?
+          </p>
         </div>
       </div>
-    </Layout>
+
+      {/* Bottom Button */}
+      <div className="px-6 py-8">
+        <Button
+          variant="primary"
+          onClick={handleMoveToStep1}
+          disabled={state.isAdvancing}
+          className="w-full rounded-full py-4 bg-black text-white hover:bg-gray-800"
+        >
+          다음
+        </Button>
+      </div>
+    </div>
   );
 }

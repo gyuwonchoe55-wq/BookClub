@@ -187,7 +187,7 @@ is_book_club_member(book_club_id)
 - Host calls `start_meeting(meeting_id)` RPC
   - RPC checks `is_book_club_host()` before starting
   - Updates meeting status to 'in_progress'
-  - Creates session with current_step='icebreaker'
+  - Creates session with current_step='intro'
 
 **Security Rationale:**
 - Meetings visible only to book club members
@@ -274,12 +274,12 @@ meeting_id IN (
 
 **How Sessions Are Managed:**
 - Host calls `start_meeting(meeting_id)` RPC
-  - Creates session with current_step='icebreaker'
+  - Creates session with current_step='intro'
   - One session per meeting (UNIQUE constraint)
   
 - Host calls `update_session_step(session_id, step)` RPC during meeting
   - Verifies host authorization before updating
-  - Progresses through: icebreaker → discussion → takeaway → completed
+  - Progresses through: intro → memorable_quote → discussion → takeaway → completed
   
 - Host calls `advance_question(session_id)` RPC
   - Increments current_question_index within a step
@@ -381,6 +381,7 @@ The following operations bypass direct table access in favor of SECURITY DEFINER
 3. **Meeting Management**:
    - `create_meeting()`: Host-only, creates new meeting
    - `start_meeting()`: Host-only, updates status to 'in_progress', creates session
+   - `end_meeting()`: Host-only, updates status to 'completed', sets session.ended_at (does not change session.current_step; the client sets it via `update_session_step` first)
    - `update_session_step()`: Host-only, progresses meeting through stages
    - `advance_question()`: Host-only, increments question index
 

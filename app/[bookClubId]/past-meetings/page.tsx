@@ -33,9 +33,9 @@ export default function PastMeetingsPage({
       try {
         const allMeetings = await getBookClubMeetings(bookClubId);
 
-        // Filter out scheduled meetings (current meeting)
+        // Past meetings are completed meetings only
         const pastMeetings = allMeetings.filter(
-          (m) => m.status !== "scheduled"
+          (m) => m.status === "completed"
         );
 
         // Add session number based on reverse order

@@ -40,7 +40,10 @@ erDiagram
         uuid meeting_id FK
         uuid member_id FK
         text memorable_quote
+        text memorable_quote_page
         text discussion_question
+        text discussion_passage
+        text discussion_note
         text takeaway
         timestamp created_at
         timestamp updated_at

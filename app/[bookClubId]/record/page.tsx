@@ -2,10 +2,10 @@
 
 import { useEffect, useState, use } from "react";
 import { useRouter } from "next/navigation";
-import { Layout, Button, Textarea } from "@/components";
+import { Layout, Button, Input, Textarea } from "@/components";
 import { useAuth } from "@/hooks/useAuth";
 import { getBookClub } from "@/lib/book-clubs";
-import { getCurrentMeeting } from "@/lib/meetings";
+import { getActiveOrCurrentMeeting } from "@/lib/meetings";
 import { getMemberByUserId } from "@/lib/members";
 import {
   getReadingRecord,
@@ -30,7 +30,10 @@ interface PageState {
 
 interface FormData {
   sentence: string;
+  sentencePage: string;
   question: string;
+  passage: string;
+  note: string;
   takeaway: string;
 }
 
@@ -55,7 +58,10 @@ export default function ReadingRecordPage({
 
   const [formData, setFormData] = useState<FormData>({
     sentence: "",
+    sentencePage: "",
     question: "",
+    passage: "",
+    note: "",
     takeaway: "",
   });
 
@@ -78,7 +84,8 @@ export default function ReadingRecordPage({
           return;
         }
 
-        const meeting = await getCurrentMeeting(bookClubId);
+        // scheduled: 작성/수정 가능, in_progress: 기존 기록 조회만 가능 (read-only)
+        const meeting = await getActiveOrCurrentMeeting(bookClubId);
         if (!meeting) {
           setState((prev) => ({
             ...prev,
@@ -104,7 +111,10 @@ export default function ReadingRecordPage({
         if (existingRecord) {
           setFormData({
             sentence: existingRecord.memorableQuote || "",
+            sentencePage: existingRecord.memorableQuotePage || "",
             question: existingRecord.discussionQuestion || "",
+            passage: existingRecord.discussionPassage || "",
+            note: existingRecord.discussionNote || "",
             takeaway: existingRecord.takeaway || "",
           });
         }
@@ -171,14 +181,20 @@ export default function ReadingRecordPage({
         // Update existing record
         await updateReadingRecord(state.existingRecord.id, {
           memorableQuote: formData.sentence,
+          memorableQuotePage: formData.sentencePage,
           discussionQuestion: formData.question,
+          discussionPassage: formData.passage,
+          discussionNote: formData.note,
           takeaway: formData.takeaway,
         });
       } else {
         // Create new record
         await createReadingRecord(state.meeting.id, state.currentMemberId, {
           memorableQuote: formData.sentence,
+          memorableQuotePage: formData.sentencePage,
           discussionQuestion: formData.question,
+          discussionPassage: formData.passage,
+          discussionNote: formData.note,
           takeaway: formData.takeaway,
         });
       }
@@ -297,7 +313,7 @@ export default function ReadingRecordPage({
             <div className="flex items-baseline gap-3">
               <span className="text-xs font-medium text-gray-500">01</span>
               <label className="text-sm font-medium text-black">
-                인상 깊은 문장
+                인상 깊은 부분
               </label>
             </div>
             <Textarea
@@ -317,16 +333,29 @@ export default function ReadingRecordPage({
               disabled={isReadOnly}
               error={formErrors.sentence}
               className={isReadOnly ? "opacity-60" : ""}
-              placeholder="책에서 인상 깊었던 문장을 옮겨 적어주세요."
+              placeholder="책에서 가장 인상 깊었던 문장이나 부분을 남겨주세요."
+            />
+            <Input
+              label="페이지 (선택)"
+              value={formData.sentencePage}
+              onChange={(e) =>
+                setFormData((prev) => ({
+                  ...prev,
+                  sentencePage: e.target.value,
+                }))
+              }
+              disabled={isReadOnly}
+              className={isReadOnly ? "opacity-60" : ""}
+              placeholder="예: 128 또는 128~130"
             />
           </div>
 
-          {/* Field 2: Discussion Question */}
+          {/* Field 2: Discussion */}
           <div className="space-y-3">
             <div className="flex items-baseline gap-3">
               <span className="text-xs font-medium text-gray-500">02</span>
               <label className="text-sm font-medium text-black">
-                이야기하고 싶은 질문
+                발제
               </label>
             </div>
             <Textarea
@@ -346,8 +375,42 @@ export default function ReadingRecordPage({
               disabled={isReadOnly}
               error={formErrors.question}
               className={isReadOnly ? "opacity-60" : ""}
-              placeholder="이 책에 대해 궁금하거나 함께 이야기하고 싶은 점을 물어봐주세요."
+              placeholder="함께 이야기해보고 싶은 질문을 적어주세요."
             />
+            <div className="space-y-2">
+              <label className="block text-sm font-medium text-black">
+                함께 읽을 본문 (선택)
+              </label>
+              <Textarea
+                value={formData.passage}
+                onChange={(e) =>
+                  setFormData((prev) => ({
+                    ...prev,
+                    passage: e.target.value,
+                  }))
+                }
+                disabled={isReadOnly}
+                className={isReadOnly ? "opacity-60" : ""}
+                placeholder="질문과 함께 살펴보면 좋을 책의 문장이나 부분을 적어주세요."
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="block text-sm font-medium text-black">
+                발제자의 말 (선택)
+              </label>
+              <Textarea
+                value={formData.note}
+                onChange={(e) =>
+                  setFormData((prev) => ({
+                    ...prev,
+                    note: e.target.value,
+                  }))
+                }
+                disabled={isReadOnly}
+                className={isReadOnly ? "opacity-60" : ""}
+                placeholder="이 질문을 떠올린 이유나 함께 이야기하고 싶은 생각을 적어주세요. 예: 이 부분을 읽으며 ○○가 궁금해졌어요. 여러분은 어떻게 생각했는지 이야기해보고 싶어요."
+              />
+            </div>
           </div>
 
           {/* Field 3: Takeaway */}
@@ -355,7 +418,7 @@ export default function ReadingRecordPage({
             <div className="flex items-baseline gap-3">
               <span className="text-xs font-medium text-gray-500">03</span>
               <label className="text-sm font-medium text-black">
-                적용점 또는 기억하고 싶은 한 가지
+                한줄평
               </label>
             </div>
             <Textarea
@@ -375,7 +438,7 @@ export default function ReadingRecordPage({
               disabled={isReadOnly}
               error={formErrors.takeaway}
               className={isReadOnly ? "opacity-60" : ""}
-              placeholder="이 책을 통해 배우거나 실천하고 싶은 점을 적어주세요."
+              placeholder="이 책을 한 문장으로 남긴다면?"
             />
           </div>
 
