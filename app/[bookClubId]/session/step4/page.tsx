@@ -109,6 +109,27 @@ export default function Step4Page({
     }
   };
 
+  // 상단 탭 이동: current_step을 먼저 갱신하고, 성공한 경우에만 해당 단계로 이동한다.
+  // 탭 클릭만으로 meeting 상태는 바뀌지 않는다(끝내기/모임 종료는 이 화면의 종료 처리에서만 수행).
+  const handleTabClick = async (
+    step: "intro" | "memorable_quote" | "discussion" | "takeaway",
+    path: "step1" | "step2" | "step3" | "step4"
+  ) => {
+    if (state.isAdvancing || step === "takeaway") return;
+
+    setState((prev) => ({ ...prev, isAdvancing: true }));
+    try {
+      await updateSessionStep(state.sessionId, step);
+      router.push(`/${bookClubId}/session/${path}?sessionId=${state.sessionId}`);
+    } catch (err) {
+      setState((prev) => ({
+        ...prev,
+        isAdvancing: false,
+        error: err instanceof Error ? err.message : "단계 이동에 실패했습니다.",
+      }));
+    }
+  };
+
   if (state.isLoading) {
     return (
       <div className="bg-yellow-400 min-h-screen flex items-center justify-center">
@@ -146,18 +167,38 @@ export default function Step4Page({
       {/* Top Navigation */}
       <div className="border-b-4 border-black bg-yellow-400 flex items-center">
         <div className="flex-1 flex">
-          <div className="flex-1 border-r-4 border-black px-4 py-3 font-bold text-center">
+          <button
+            type="button"
+            onClick={() => handleTabClick("intro", "step1")}
+            disabled={state.isAdvancing}
+            className="flex-1 border-r-4 border-black px-4 py-3 font-bold text-center cursor-pointer"
+          >
             인트로
-          </div>
-          <div className="flex-1 border-r-4 border-black px-4 py-3 font-bold text-center">
+          </button>
+          <button
+            type="button"
+            onClick={() => handleTabClick("memorable_quote", "step2")}
+            disabled={state.isAdvancing}
+            className="flex-1 border-r-4 border-black px-4 py-3 font-bold text-center cursor-pointer"
+          >
             진행 1
-          </div>
-          <div className="flex-1 border-r-4 border-black px-4 py-3 font-bold text-center">
+          </button>
+          <button
+            type="button"
+            onClick={() => handleTabClick("discussion", "step3")}
+            disabled={state.isAdvancing}
+            className="flex-1 border-r-4 border-black px-4 py-3 font-bold text-center cursor-pointer"
+          >
             진행 2
-          </div>
-          <div className="flex-1 bg-black text-white border-r-4 border-black px-4 py-3 font-bold text-center">
+          </button>
+          <button
+            type="button"
+            onClick={() => handleTabClick("takeaway", "step4")}
+            disabled={state.isAdvancing}
+            className="flex-1 bg-black text-white border-r-4 border-black px-4 py-3 font-bold text-center"
+          >
             마무리
-          </div>
+          </button>
         </div>
         <div className="px-4 py-3 font-bold">끝내기</div>
       </div>
